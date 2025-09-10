@@ -8,3 +8,7 @@ INFO 2025-09-10 01:37:03,882 autoreload Watching for file changes with StatReloa
 INFO 2025-09-10 01:37:44,672 autoreload Watching for file changes with StatReloader
 INFO 2025-09-10 01:39:10,980 autoreload Watching for file changes with StatReloader
 INFO 2025-09-10 01:39:24,751 autoreload Watching for file changes with StatReloader
+INFO 2025-09-10 01:44:39,049 autoreload Watching for file changes with StatReloader
+INFO 2025-09-10 01:46:44,457 autoreload D:\condominum-app\backend\authentication\migrations\__init__.py changed, reloading.
+INFO 2025-09-10 01:46:45,597 autoreload Watching for file changes with StatReloader
+INFO 2025-09-10 15:56:28,516 autoreload Watching for file changes with StatReloader
