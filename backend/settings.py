@@ -43,7 +43,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework_simplejwt',
     'django_filters',
-    'authentication',
+    'api',
     'finance',
     'communication',
 ]
@@ -167,7 +167,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Custom User Model
-AUTH_USER_MODEL = 'authentication.User'
+AUTH_USER_MODEL = 'api.User'
 
 
 # Default primary key field type
@@ -176,7 +176,7 @@ AUTH_USER_MODEL = 'authentication.User'
 # REST Framework configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework_simplejwt.api.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -265,7 +265,7 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
-        "authentication": {
+        "api": {
             "handlers": ["console", "file"],
             "level": "DEBUG",
             "propagate": False,
