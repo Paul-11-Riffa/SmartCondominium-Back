@@ -147,7 +147,7 @@ class Migration(migrations.Migration):
                 ('is_active', models.BooleanField(default=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('unit', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='user_relations', to='authentication.housingunit')),
+                ('unit', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='user_relations', to='api.housingunit')),
                 ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='unit_relations', to=settings.AUTH_USER_MODEL)),
             ],
             options={
