@@ -76,7 +76,6 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
     "rest_framework",
     "rest_framework.authtoken",
     "django_filters",
@@ -119,23 +118,24 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # ------------------------------------
-# Base de datos (Supabase Postgres vía pooler, SSL)
-# ------------------------------------
 DATABASES = {
     "default": dj_database_url.config(
-        env="DATABASE_URL",      # debe estar en .env
-        conn_max_age=600,        # persistentes (ideal puerto 5432)
-        ssl_require=True,
+        env="DATABASE_URL",
     )
 }
 
-# Si usas PgBouncer (pooler) en 6543, conviene deshabilitar persistencia
+# Configuraciones adicionales después
 _db_url = os.getenv("DATABASE_URL", "")
 if ":6543/" in _db_url:
     DATABASES["default"]["CONN_MAX_AGE"] = 0
-    # En algunas versiones: DISABLE_SERVER_SIDE_CURSORS = True
-    # (si lo necesitas, habilítalo también en settings global)
+else:
+    DATABASES["default"]["CONN_MAX_AGE"] = 600
 
+# SSL para Supabase
+if "supabase" in _db_url:
+    DATABASES["default"]["OPTIONS"] = {
+        "sslmode": "require"
+    }
 # ------------------------------------
 # Password validators
 # ------------------------------------
@@ -217,4 +217,21 @@ LOGGING = {
         "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "api": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
     },
+}
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "ai-detection-images")
+SUPABASE_STORAGE_URL = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}"
+
+# ------------------------------------
+# Configuración de IA
+# ------------------------------------
+AI_IMAGE_SETTINGS = {
+    'MAX_SIZE': (1920, 1080),
+    'THUMBNAIL_SIZE': (800, 600),
+    'JPEG_QUALITY': int(os.getenv("AI_JPEG_QUALITY", "85")),
+    'MAX_FILE_SIZE_MB': 5,
+    'FACE_TOLERANCE': float(os.getenv("AI_FACE_TOLERANCE", "0.6")),
+    'PLATE_CONFIDENCE_THRESHOLD': float(os.getenv("AI_PLATE_CONFIDENCE_THRESHOLD", "0.5")),
 }
