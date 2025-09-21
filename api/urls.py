@@ -7,7 +7,8 @@ from .views import (
     PerteneceViewSet, ListaVisitantesViewSet, DetalleMultaViewSet, FacturaViewSet,
     FinanzasViewSet, ComunicadosViewSet, HorariosViewSet, ReservaViewSet,
     AsignacionViewSet, EnvioViewSet, RegistroViewSet, BitacoraViewSet,
-    LoginView, RegisterView, LogoutView
+    LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
+    PerfilFacialViewSet, ReporteSeguridadViewSet
 )
 
 router = DefaultRouter()
@@ -32,7 +33,11 @@ router.register(r'asignaciones', AsignacionViewSet)
 router.register(r'envios', EnvioViewSet)
 router.register(r'registros', RegistroViewSet)
 router.register(r'bitacora', BitacoraViewSet)
-
+router.register(r'ai-detection', AIDetectionViewSet, basename='ai-detection')
+router.register(r'reconocimientos-faciales', ReconocimientoFacialViewSet)
+router.register(r'detecciones-placas', DeteccionPlacaViewSet)
+router.register(r'perfiles-faciales', PerfilFacialViewSet)
+router.register(r'reportes-seguridad', ReporteSeguridadViewSet)
 urlpatterns = [
     path('', include(router.urls)),
     path('auth/login/', LoginView.as_view(), name='auth-login'),

@@ -393,3 +393,110 @@ class Bitacora(models.Model):
 
     def __str__(self):
         return f"Bitácora {self.id}"
+# Agregar estos modelos al final de api/models.py
+
+class PerfilFacial(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column="Id")
+    codigo_usuario = models.OneToOneField(
+        Usuario, models.CASCADE, db_column="CodigoUsuario",
+        related_name="perfil_facial"
+    )
+    encoding_facial = models.TextField(db_column="EncodingFacial")
+    imagen_path = models.TextField(null=True, blank=True, db_column="ImagenPath")
+    imagen_url = models.URLField(null=True, blank=True, db_column="ImagenUrl")
+    fecha_registro = models.DateTimeField(auto_now_add=True, db_column="FechaRegistro")
+    activo = models.BooleanField(default=True, db_column="Activo")
+
+    class Meta:
+        db_table = "PerfilFacial"
+
+    def __str__(self):
+        return f"Perfil facial - {self.codigo_usuario.nombre} {self.codigo_usuario.apellido}"
+
+
+class ReconocimientoFacial(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column="Id")
+    codigo_usuario = models.ForeignKey(
+        Usuario, models.SET_NULL, null=True, blank=True,
+        db_column="CodigoUsuario", related_name="reconocimientos"
+    )
+    imagen_path = models.TextField(null=True, blank=True, db_column="ImagenPath")
+    imagen_url = models.URLField(null=True, blank=True, db_column="ImagenUrl")
+    confianza = models.DecimalField(max_digits=5, decimal_places=2, db_column="Confianza")
+    es_residente = models.BooleanField(default=False, db_column="EsResidente")
+    fecha_deteccion = models.DateTimeField(auto_now_add=True, db_column="FechaDeteccion")
+    ubicacion_camara = models.TextField(null=True, blank=True, db_column="UbicacionCamara")
+    estado = models.TextField(
+        choices=[('permitido', 'Permitido'), ('denegado', 'Denegado'), ('revision', 'En Revisión')],
+        default='revision', db_column="Estado"
+    )
+
+    class Meta:
+        db_table = "ReconocimientoFacial"
+
+    def __str__(self):
+        return f"Reconocimiento {self.id} - {self.fecha_deteccion}"
+
+
+class DeteccionPlaca(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column="Id")
+    placa_detectada = models.TextField(db_column="PlacaDetectada")
+    vehiculo = models.ForeignKey(
+        Vehiculo, models.SET_NULL, null=True, blank=True,
+        db_column="IdVehiculo", related_name="detecciones"
+    )
+    imagen_path = models.TextField(null=True, blank=True, db_column="ImagenPath")
+    imagen_url = models.URLField(null=True, blank=True, db_column="ImagenUrl")
+    confianza = models.DecimalField(max_digits=5, decimal_places=2, db_column="Confianza")
+    es_autorizado = models.BooleanField(default=False, db_column="EsAutorizado")
+    fecha_deteccion = models.DateTimeField(auto_now_add=True, db_column="FechaDeteccion")
+    ubicacion_camara = models.TextField(null=True, blank=True, db_column="UbicacionCamara")
+    tipo_acceso = models.TextField(
+        choices=[('entrada', 'Entrada'), ('salida', 'Salida')],
+        db_column="TipoAcceso"
+    )
+
+    class Meta:
+        db_table = "DeteccionPlaca"
+
+    def __str__(self):
+        return f"Placa {self.placa_detectada} - {self.fecha_deteccion}"
+
+
+class ReporteSeguridad(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column="Id")
+    tipo_evento = models.TextField(
+        choices=[
+            ('acceso_facial', 'Acceso Facial'),
+            ('acceso_vehicular', 'Acceso Vehicular'),
+            ('intruso_detectado', 'Intruso Detectado'),
+            ('placa_no_autorizada', 'Placa No Autorizada')
+        ],
+        db_column="TipoEvento"
+    )
+    reconocimiento_facial = models.ForeignKey(
+        ReconocimientoFacial, models.SET_NULL, null=True, blank=True,
+        db_column="IdReconocimientoFacial", related_name="reportes"
+    )
+    deteccion_placa = models.ForeignKey(
+        DeteccionPlaca, models.SET_NULL, null=True, blank=True,
+        db_column="IdDeteccionPlaca", related_name="reportes"
+    )
+    descripcion = models.TextField(db_column="Descripcion")
+    nivel_alerta = models.TextField(
+        choices=[('bajo', 'Bajo'), ('medio', 'Medio'), ('alto', 'Alto'), ('critico', 'Crítico')],
+        default='medio', db_column="NivelAlerta"
+    )
+    fecha_evento = models.DateTimeField(auto_now_add=True, db_column="FechaEvento")
+    revisado = models.BooleanField(default=False, db_column="Revisado")
+    revisor = models.ForeignKey(
+        Usuario, models.SET_NULL, null=True, blank=True,
+        db_column="CodigoRevisor", related_name="reportes_revisados"
+    )
+
+    class Meta:
+        db_table = "ReporteSeguridad"
+        ordering = ['-fecha_evento']
+
+    def __str__(self):
+        return f"Reporte {self.tipo_evento} - {self.fecha_evento}"
