@@ -1,6 +1,10 @@
+from decimal import Decimal
+
+from django.http import FileResponse, Http404
 from rest_framework import viewsets, permissions
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -12,10 +16,18 @@ from datetime import timedelta
 from .services.ai_detection import FacialRecognitionService, PlateDetectionService
 from .services.supabase_storage import SupabaseStorageService
 import logging
-import base64
 from rest_framework.parsers import MultiPartParser, FormParser
 import traceback
-import time
+from datetime import date
+from django.db import models
+from django.db import IntegrityError, transaction
+from rest_framework import status
+from rest_framework.response import Response
+from io import BytesIO
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from datetime import datetime, timedelta
+from django.db.models import Q, Sum
 
 from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
@@ -25,12 +37,12 @@ from .models import (
 )
 from .serializers import (
     RolSerializer, UsuarioSerializer, PropiedadSerializer, MultaSerializer,
-    PagosSerializer, NotificacionesSerializer, AreasComunesSerializer, TareasSerializer,
+    PagoSerializer, NotificacionesSerializer, AreasComunesSerializer, TareasSerializer,
     VehiculoSerializer, PerteneceSerializer, ListaVisitantesSerializer, DetalleMultaSerializer,
     FacturaSerializer, FinanzasSerializer, ComunicadosSerializer, HorariosSerializer,
     ReservaSerializer, AsignacionSerializer, EnvioSerializer, RegistroSerializer,
     BitacoraSerializer, ReconocimientoFacialSerializer, PerfilFacialSerializer, DeteccionPlacaSerializer,
-    ReporteSeguridadSerializer
+    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer
 )
 
 
@@ -55,27 +67,222 @@ class RolViewSet(BaseModelViewSet):
 
 
 class PropiedadViewSet(BaseModelViewSet):
-    queryset = Propiedad.objects.all().order_by('codigo')
+    queryset = Propiedad.objects.all().order_by('nro_casa', 'piso')
     serializer_class = PropiedadSerializer
-    filterset_fields = ['nrocasa', 'piso', 'descripcion']
-    search_fields = ['descripcion']
-    ordering_fields = ['codigo', 'nrocasa', 'piso', 'tamano_m2']
+    filterset_fields = ['nro_casa', 'piso', 'descripcion']
+    search_fields = ['descripcion', 'nro_casa']
+    ordering_fields = ['codigo', 'nro_casa', 'piso', 'tamano_m2']
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
 
-class MultaViewSet(BaseModelViewSet):
-    queryset = Multa.objects.all().order_by('id')
+        # Si se solicita incluir información de residentes
+        if self.request.query_params.get('include_residents') == 'true':
+            queryset = queryset.prefetch_related('pertenentes__codigo_usuario__idrol')
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            propiedades_data = self._serialize_propiedades_with_residents(page)
+            return self.get_paginated_response(propiedades_data)
+
+        propiedades_data = self._serialize_propiedades_with_residents(queryset)
+        return Response(propiedades_data)
+
+    def create(self, request, *args, **kwargs):
+        # (opcional) pre-chequeo amigable antes de ir a BD
+        nro_casa = request.data.get('nro_casa')
+        piso = request.data.get('piso', 0)
+        if nro_casa is not None and piso is not None:
+            if Propiedad.objects.filter(nro_casa=nro_casa, piso=piso).exists():
+                return Response(
+                    {'detail': f'Ya existe una unidad con número {nro_casa} en piso {piso}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Bitácora (tu lógica existente)
+        try:
+            usuario = Usuario.objects.get(correo=request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=usuario,
+                accion=f"Creación de unidad habitacional {nro_casa}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(request)
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+        # Intento real de creación (atrapa la UNIQUE constraint)
+        try:
+            with transaction.atomic():
+                return super().create(request, *args, **kwargs)
+        except IntegrityError:
+            return Response(
+                {"detail": "La unidad ya existe (NroCasa + Piso)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        # (opcional) pre-chequeo amigable antes de ir a BD
+        nro_casa = request.data.get("nro_casa", instance.nro_casa)
+        piso = request.data.get("piso", instance.piso if instance.piso is not None else 0)
+        if (
+                nro_casa is not None
+                and piso is not None
+                and Propiedad.objects.filter(nro_casa=nro_casa, piso=piso)
+                .exclude(pk=instance.pk)
+                .exists()
+        ):
+            return Response(
+                {"detail": f"Ya existe una unidad con número {nro_casa} en piso {piso}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Bitácora (tu lógica existente)
+        try:
+            usuario = Usuario.objects.get(correo=request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=usuario,
+                accion=f"Edición de unidad habitacional {instance.nro_casa}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(request)
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+        # Intento real de actualización (atrapa la UNIQUE constraint)
+        try:
+            with transaction.atomic():
+                return super().update(request, *args, **kwargs)
+        except IntegrityError:
+            return Response(
+                {"detail": "La unidad ya existe (NroCasa + Piso)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    def _serialize_propiedades_with_residents(self, propiedades):
+        """Serializa propiedades incluyendo información del residente actual"""
+        result = []
+
+        for propiedad in propiedades:
+            # Datos básicos de la propiedad
+            prop_data = PropiedadSerializer(propiedad).data
+
+            # Buscar residente actual (sin fecha_fin o fecha_fin futura)
+            residente_actual = None
+
+            # Obtener la vinculación más reciente que esté activa
+            vinculacion_activa = Pertenece.objects.filter(
+                codigo_propiedad=propiedad,
+                fecha_ini__lte=date.today()
+            ).filter(
+                models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=date.today())
+            ).select_related('codigo_usuario__idrol').order_by('-fecha_ini').first()
+
+            if vinculacion_activa and vinculacion_activa.codigo_usuario:
+                usuario = vinculacion_activa.codigo_usuario
+                residente_actual = {
+                    'codigo': usuario.codigo,
+                    'nombre': usuario.nombre,
+                    'apellido': usuario.apellido,
+                    'correo': usuario.correo,
+                    'tipo_rol': usuario.idrol.descripcion if usuario.idrol else 'Sin rol',
+                    'fecha_ini': vinculacion_activa.fecha_ini.isoformat(),
+                    'fecha_fin': vinculacion_activa.fecha_fin.isoformat() if vinculacion_activa.fecha_fin else None
+                }
+
+            prop_data['propietario_actual'] = residente_actual
+            result.append(prop_data)
+
+        return result
+
+    def _get_client_ip(self, request):
+        """Obtiene la IP del cliente"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+class BitacoraMixin:
+    def _bitacora(self, request, accion: str):
+        try:
+            usuario = Usuario.objects.get(correo=getattr(request.user, "email", None))
+            Bitacora.objects.create(
+                codigo_usuario=usuario,
+                accion=accion,
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(request),
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+    def _get_client_ip(self, request):
+        xf = request.META.get("HTTP_X_FORWARDED_FOR")
+        return xf.split(",")[0] if xf else request.META.get("REMOTE_ADDR")
+
+class MultaViewSet(BitacoraMixin, viewsets.ModelViewSet):
+    queryset = Multa.objects.all().order_by("descripcion")
     serializer_class = MultaSerializer
-    filterset_fields = ['monto']
-    search_fields = ['descripcion']
-    ordering_fields = ['id', 'monto']
+    search_fields = ["descripcion"]
+    filterset_fields = (["estado"] if hasattr(Multa, "estado") else [])
+    ordering_fields = ["id", "descripcion", "monto"]
+
+    def create(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                resp = super().create(request, *args, **kwargs)
+                self._bitacora(request, f"Alta de multa: {resp.data.get('descripcion')}")
+                return resp
+        except IntegrityError:
+            # Por si luego agregas UNIQUE en descripcion
+            return Response({"detail": "Ya existe una multa con esa descripción."}, status=400)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                resp = super().update(request, *args, **kwargs)
+                self._bitacora(request, f"Edición de multa: {resp.data.get('descripcion')}")
+                return resp
+        except IntegrityError:
+            return Response({"detail": "Conflicto de BD al actualizar la multa."}, status=400)
 
 
-class PagosViewSet(BaseModelViewSet):
-    queryset = Pagos.objects.all().order_by('id')
-    serializer_class = PagosSerializer
-    filterset_fields = ['tipo', 'monto']
-    search_fields = ['tipo', 'descripcion']
-    ordering_fields = ['id', 'monto']
+class PagoViewSet(BitacoraMixin, viewsets.ModelViewSet):
+    queryset = Pagos.objects.all().order_by("tipo", "descripcion")
+    serializer_class = PagoSerializer
+    search_fields = ["tipo", "descripcion"]
+    filterset_fields = ["tipo"] + (["estado"] if hasattr(Pagos, "estado") else [])
+    ordering_fields = ["id", "tipo", "descripcion", "monto"]
+
+    def create(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                resp = super().create(request, *args, **kwargs)
+                self._bitacora(request, f"Alta de pago: {resp.data.get('descripcion')}")
+                return resp
+        except IntegrityError:
+            return Response({"detail": "No se pudo crear el pago (conflicto en BD)."}, status=400)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                resp = super().update(request, *args, **kwargs)
+                self._bitacora(request, f"Edición de pago: {resp.data.get('descripcion')}")
+                return resp
+        except IntegrityError:
+            return Response({"detail": "No se pudo actualizar el pago (conflicto en BD)."}, status=400)
+
 
 
 class NotificacionesViewSet(BaseModelViewSet):
@@ -122,12 +329,127 @@ class UsuarioViewSet(BaseModelViewSet):
 
 
 class PerteneceViewSet(BaseModelViewSet):
-    queryset = Pertenece.objects.all().order_by('id')
+    queryset = Pertenece.objects.all().order_by('-fecha_ini')
     serializer_class = PerteneceSerializer
-    filterset_fields = ['codigousuario', 'codigopropiedad', 'fechaini', 'fechafin']
+    filterset_fields = ['codigo_usuario', 'codigo_propiedad', 'fecha_ini', 'fecha_fin']
     search_fields = []
-    ordering_fields = ['id', 'fechaini', 'fechafin']
+    ordering_fields = ['id', 'fecha_ini', 'fecha_fin']
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+
+        # Filtro para obtener solo vinculaciones activas
+        if self.request.query_params.get('activas') == 'true':
+            queryset = queryset.filter(
+                fecha_ini__lte=date.today()
+            ).filter(
+                models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=date.today())
+            )
+
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        codigo_usuario = request.data.get('codigo_usuario')
+        codigo_propiedad = request.data.get('codigo_propiedad')
+        fecha_ini = request.data.get('fecha_ini')
+        fecha_fin = request.data.get('fecha_fin')
+
+        # Validaciones
+        if not codigo_usuario or not codigo_propiedad or not fecha_ini:
+            return Response(
+                {'detail': 'Usuario, propiedad y fecha de inicio son obligatorios'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verificar que el usuario existe y está activo
+        try:
+            usuario = Usuario.objects.get(codigo=codigo_usuario, estado='activo')
+            if usuario.idrol_id not in [1, 2]:  # Solo copropietarios e inquilinos
+                return Response(
+                    {'detail': 'Solo se pueden vincular copropietarios e inquilinos'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Usuario.DoesNotExist:
+            return Response(
+                {'detail': 'Usuario no encontrado o inactivo'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Verificar que la propiedad existe
+        try:
+            propiedad = Propiedad.objects.get(codigo=codigo_propiedad)
+        except Propiedad.DoesNotExist:
+            return Response(
+                {'detail': 'Propiedad no encontrada'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Verificar fechas
+        from datetime import datetime
+        fecha_ini_date = datetime.strptime(fecha_ini, '%Y-%m-%d').date()
+
+        if fecha_fin:
+            fecha_fin_date = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
+            if fecha_fin_date <= fecha_ini_date:
+                return Response(
+                    {'detail': 'La fecha de fin debe ser posterior a la fecha de inicio'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Verificar que no haya vinculaciones conflictivas
+        # (mismo usuario con otra propiedad activa, o misma propiedad con otro usuario activo)
+
+        # Conflicto: usuario ya vinculado a otra propiedad activa
+        conflicto_usuario = Pertenece.objects.filter(
+            codigo_usuario=usuario,
+            fecha_ini__lte=fecha_ini_date
+        ).filter(
+            models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
+        ).exclude(codigo_propiedad=propiedad).exists()
+
+        if conflicto_usuario:
+            return Response(
+                {'detail': 'El usuario ya está vinculado a otra propiedad en el período especificado'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Conflicto: propiedad ya vinculada a otro usuario activo
+        conflicto_propiedad = Pertenece.objects.filter(
+            codigo_propiedad=propiedad,
+            fecha_ini__lte=fecha_ini_date
+        ).filter(
+            models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
+        ).exclude(codigo_usuario=usuario).exists()
+
+        if conflicto_propiedad:
+            return Response(
+                {'detail': 'La propiedad ya está vinculada a otro usuario en el período especificado'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Registrar en bitácora
+        try:
+            admin_usuario = Usuario.objects.get(correo=request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=admin_usuario,
+                accion=f"Vinculación de {usuario.nombre} {usuario.apellido} a unidad {propiedad.nro_casa}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(request)
+            )
+        except Usuario.DoesNotExist:
+            pass
+
+        return super().create(request, *args, **kwargs)
+
+    def _get_client_ip(self, request):
+        """Obtiene la IP del cliente"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
 
 class ListaVisitantesViewSet(BaseModelViewSet):
     queryset = ListaVisitantes.objects.all().order_by('id')
@@ -834,3 +1156,191 @@ class AIDetectionViewSet(viewsets.ViewSet):
                 {'error': 'Error interno del servidor'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# -------- Helpers ----------
+def _month_range(yyyy_mm: str):
+    """Devuelve (primer_día, último_día) para un 'YYYY-MM'. Si es inválido, usa el mes actual."""
+    try:
+        y, m = map(int, yyyy_mm.split("-"))
+        first = date(y, m, 1)
+    except Exception:
+        today = date.today()
+        y, m = today.year, today.month
+        first = date(y, m, 1)
+
+    if m == 12:
+        last = date(y + 1, 1, 1) - timedelta(days=1)
+    else:
+        last = date(y, m + 1, 1) - timedelta(days=1)
+    return first, last
+
+
+def _bitacora(request, accion: str):
+    try:
+        u = Usuario.objects.get(correo=request.user.email)
+        Bitacora.objects.create(
+            codigo_usuario=u,
+            accion=accion,
+            fecha=timezone.now().date(),
+            hora=timezone.now().time(),
+            ip=request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0] or request.META.get("REMOTE_ADDR") or "0.0.0.0",
+        )
+    except Usuario.DoesNotExist:
+        pass
+
+
+# -------- Endpoint: Estado de Cuenta ----------
+class EstadoCuentaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # 1) usuario
+        try:
+            user = Usuario.objects.get(correo=request.user.email)
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no registrado en catálogo."}, status=400)
+
+        # 2) mes (YYYY-MM)
+        mes = request.query_params.get("mes") or date.today().strftime("%Y-%m")
+        desde, hasta = _month_range(mes)
+
+        # 3) propiedades del usuario (ocupación vigente en el período)
+        pertenencias = (
+            Pertenece.objects
+            .filter(codigo_usuario=user, fecha_ini__lte=hasta)
+            .filter(Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=desde))
+            .select_related("codigo_propiedad")
+        )
+
+        propiedades = [p.codigo_propiedad for p in pertenencias]
+        props_desc = [p.codigo_propiedad.descripcion for p in pertenencias]
+
+        # 4) CARGOS
+        cargos = []
+
+        # a) cat. Pagos vigentes (si tu tabla Pagos no tiene 'estado', elimina el filter(estado="activo"))
+        pagos_catalogo_qs = Pagos.objects.all()
+        if hasattr(Pagos, "estado"):
+            pagos_catalogo_qs = pagos_catalogo_qs.filter(estado="activo")
+
+        for p in pagos_catalogo_qs:
+            cargos.append({
+                "tipo": p.tipo,                       # 'Cuota ordinaria', 'Servicio', etc.
+                "descripcion": p.descripcion,
+                "monto": p.monto,
+                "origen": "pago",
+                "fecha": None,
+            })
+
+        # b) Multas emitidas a sus propiedades dentro del mes
+        if propiedades:
+            multas_qs = (
+                DetalleMulta.objects
+                .filter(codigo_propiedad__in=[pp.codigo for pp in propiedades],
+                        fechaemi__range=(desde, hasta))
+                .select_related("id_multa", "codigo_propiedad")
+            )
+            for dm in multas_qs:
+                m = dm.id_multa
+                # si Multa tiene 'estado', sólo contamos activas
+                if hasattr(Multa, "estado") and m.estado != "activo":
+                    continue
+                cargos.append({
+                    "tipo": "Multa",
+                    "descripcion": m.descripcion,
+                    "monto": m.monto,
+                    "origen": "multa",
+                    "fecha": dm.fecha_emi,
+                })
+
+        total_cargos = sum((Decimal(c["monto"]) for c in cargos), Decimal("0.00"))
+
+        # 5) PAGOS del usuario en el mes (Facturas pagadas)
+        pagos_qs = (
+            Factura.objects
+            .filter(codigo_usuario=user, fecha__range=(desde, hasta), estado="pagado")
+            .select_related("id_pago", "codigo_usuario")
+        )
+
+       # pagos_ser = PagoRealizadoSerializer(pagos_qs, many=True).data   # <- usar serializer de consulta
+        total_pagos = pagos_qs.aggregate(s=Sum("id_pago__monto"))["s"] or Decimal("0.00")
+
+        saldo = total_cargos - total_pagos
+
+        # 6) E1: sin info
+        mensaje = ""
+        if not cargos and not pagos_qs.exists():
+            mensaje = "No existen registros para el período seleccionado."
+
+        # 7) Bitácora
+        _bitacora(request, f"Consulta estado de cuenta {mes}")
+
+        payload = {
+            "mes": mes,
+            "propiedades": props_desc,
+            "cargos": cargos,
+           # "pagos": pagos_ser,
+            "pagos" : pagos_qs,
+            "totales": {
+                "cargos": f"{total_cargos:.2f}",
+                "pagos": f"{total_pagos:.2f}",
+                "saldo": f"{saldo:.2f}",
+            },
+            "mensaje": mensaje,
+        }
+        # Validamos contra el envelope final antes de responder
+        return Response(EstadoCuentaSerializer(payload).data, status=200)
+
+
+# -------- Endpoint: PDF Comprobante ----------
+class ComprobantePDFView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk: int):
+        # Verifica que la factura pertenezca al usuario
+        try:
+            user = Usuario.objects.get(correo=request.user.email)
+            factura = (
+                Factura.objects
+                .select_related("id_pago", "codigo_usuario")
+                .get(id=pk, codigo_usuario=user)
+            )
+        except (Usuario.DoesNotExist, Factura.DoesNotExist):
+            raise Http404()
+
+        # Generar PDF simple
+        buff = BytesIO()
+        c = canvas.Canvas(buff, pagesize=A4)
+        w, h = A4
+
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(40, h - 60, "Smart Condominium - Comprobante de Pago")
+
+        c.setFont("Helvetica", 11)
+        y = h - 110
+        rows = [
+            ("N° Comprobante", str(factura.id)),
+            ("Fecha", factura.fecha.strftime("%Y-%m-%d")),
+            ("Hora", factura.hora.strftime("%H:%M:%S")),
+            ("Usuario", f"{factura.codigo_usuario.nombre} {factura.codigo_usuario.apellido}"),
+            ("Correo", factura.codigo_usuario.correo),
+            ("Concepto", factura.id_pago.descripcion),
+            ("Tipo de Pago", factura.tipo_pago),
+            ("Monto", f"{factura.id_pago.monto:.2f}"),
+            ("Estado", factura.estado),
+        ]
+        for label, value in rows:
+            c.drawString(40, y, f"{label}: {value}")
+            y -= 20
+
+        c.line(40, y - 10, w - 40, y - 10)
+        c.drawString(40, y - 30, "Gracias por su pago.")
+        c.showPage()
+        c.save()
+        buff.seek(0)
+
+        # Bitácora
+        _bitacora(request, f"Descarga comprobante #{factura.id}")
+
+        return FileResponse(buff, as_attachment=True, filename=f"comprobante_{factura.id}.pdf")

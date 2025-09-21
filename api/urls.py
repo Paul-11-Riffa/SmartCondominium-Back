@@ -2,21 +2,21 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    RolViewSet, UsuarioViewSet, PropiedadViewSet, MultaViewSet, PagosViewSet,
+    RolViewSet, UsuarioViewSet, PropiedadViewSet, MultaViewSet, PagoViewSet,
     NotificacionesViewSet, AreasComunesViewSet, TareasViewSet, VehiculoViewSet,
     PerteneceViewSet, ListaVisitantesViewSet, DetalleMultaViewSet, FacturaViewSet,
     FinanzasViewSet, ComunicadosViewSet, HorariosViewSet, ReservaViewSet,
     AsignacionViewSet, EnvioViewSet, RegistroViewSet, BitacoraViewSet,
     LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
-    PerfilFacialViewSet, ReporteSeguridadViewSet
+    PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView
 )
 
 router = DefaultRouter()
 router.register(r'roles', RolViewSet)
 router.register(r'usuarios', UsuarioViewSet)
 router.register(r'propiedades', PropiedadViewSet)
-router.register(r'multas', MultaViewSet)
-router.register(r'pagos', PagosViewSet)
+router.register(r'multas', MultaViewSet, basename='multas')
+router.register(r'pagos', PagoViewSet, basename='pagos')
 router.register(r'notificaciones', NotificacionesViewSet)
 router.register(r'areas-comunes', AreasComunesViewSet)
 router.register(r'tareas', TareasViewSet)
@@ -43,5 +43,6 @@ urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='auth-login'),
     path('auth/register/', RegisterView.as_view(), name='auth-register'),
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
+    path("estado-cuenta/", EstadoCuentaView.as_view(), name="estado-cuenta"),
 
 ]
