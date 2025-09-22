@@ -20,22 +20,69 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
 
 class PropiedadSerializer(serializers.ModelSerializer):
+    tamano_m2 = serializers.DecimalField(
+        max_digits=12, decimal_places=2,
+        coerce_to_string=False, allow_null=True, required=False
+    )
+
     class Meta:
         model = Propiedad
-        fields = "__all__"
+        fields = ("codigo", "nro_casa", "piso", "tamano_m2", "descripcion")
 
 
 class MultaSerializer(serializers.ModelSerializer):
+    monto = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
+
     class Meta:
         model = Multa
-        fields = "__all__"
+        # Si tu modelo tiene 'estado', inclúyelo; si no, omítelo.
+        fields = ("id", "descripcion", "monto", "estado") if hasattr(Multa, "estado") else ("id", "descripcion", "monto")
+
+    def validate_descripcion(self, value):
+        qs = Multa.objects.filter(descripcion__iexact=value.strip())
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Ya existe una multa con esa descripción.")
+        if not value.strip():
+            raise serializers.ValidationError("La descripción es obligatoria.")
+        return value
+
+    def validate_monto(self, value):
+        if value is None or value <= 0:
+            raise serializers.ValidationError("El monto debe ser mayor a 0.")
+        return value
 
 
-class PagosSerializer(serializers.ModelSerializer):
+
+
+class PagoSerializer(serializers.ModelSerializer):
+    monto = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
+
     class Meta:
         model = Pagos
-        fields = "__all__"
+        # Si tu modelo tiene 'estado', déjalo en fields; si no, quítalo sin problema.
+        fields = ("id", "tipo", "descripcion", "monto", "estado") if hasattr(Pagos, "estado") else ("id", "tipo", "descripcion", "monto")
 
+    def validate(self, attrs):
+        tipo = attrs.get("tipo") or getattr(self.instance, "tipo", None)
+        descripcion = attrs.get("descripcion") or getattr(self.instance, "descripcion", None)
+        monto = attrs.get("monto") if "monto" in attrs else getattr(self.instance, "monto", None)
+
+        if not tipo:
+            raise serializers.ValidationError({"tipo": "El tipo es obligatorio."})
+        if not descripcion:
+            raise serializers.ValidationError({"descripcion": "La descripción es obligatoria."})
+        if monto is None or monto <= 0:
+            raise serializers.ValidationError({"monto": "El monto debe ser mayor a 0."})
+        return attrs
+
+class CargoSerializer(serializers.Serializer):
+    tipo = serializers.CharField()
+    descripcion = serializers.CharField()
+    monto = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
+    origen = serializers.CharField()  # 'pago' (expensa/servicio) | 'multa'
+    fecha = serializers.DateField(required=False, allow_null=True)
 
 class NotificacionesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -175,6 +222,34 @@ class DeteccionPlacaSerializer(serializers.ModelSerializer):
             }
         return None
 
+class PagoRealizadoSerializer(serializers.ModelSerializer):
+    """
+    Composición Factura + concepto de Pagos.
+    Lee de Factura y expone campos amigables para el front.
+    """
+    id = serializers.IntegerField(read_only=True)
+    concepto = serializers.CharField(source="id_pago.descripcion", read_only=True)
+    monto = serializers.DecimalField(
+        source="id_pago.monto",
+        max_digits=12, decimal_places=2,
+        read_only=True, coerce_to_string=False
+    )
+    fecha = serializers.DateField(read_only=True)
+    hora = serializers.TimeField(read_only=True)
+    tipo_pago = serializers.CharField(read_only=True)
+    estado = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = Factura
+        fields = ("id", "concepto", "monto", "fecha", "hora", "tipo_pago", "estado")
+
+class EstadoCuentaSerializer(serializers.Serializer):
+    mes = serializers.CharField()
+    propiedades = serializers.ListField(child=serializers.CharField())  # descripciones
+    cargos = CargoSerializer(many=True)
+    pagos = PagoRealizadoSerializer(many=True)
+    totales = serializers.DictField()  # {'cargos': ..., 'pagos': ..., 'saldo': ...}
+    mensaje = serializers.CharField(allow_blank=True)
 
 class ReporteSeguridadSerializer(serializers.ModelSerializer):
     class Meta:
