@@ -1,5 +1,6 @@
 from decimal import Decimal
-
+import requests
+import os
 from django.http import FileResponse, Http404
 from rest_framework import viewsets, permissions
 from django_filters.rest_framework import DjangoFilterBackend
@@ -28,7 +29,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum
-
+AI_WORKER_URL = os.getenv("AI_WORKER_URL")
 from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
     Vehiculo, Pertenece, ListaVisitantes, DetalleMulta, Factura, Finanzas,
@@ -757,39 +758,59 @@ class AIDetectionViewSet(viewsets.ViewSet):
     # ============= RECONOCIMIENTO FACIAL =============
     @action(detail=False, methods=['post'])
     def recognize_face(self, request):
+        # 1. Obtener la imagen (esto no cambia)
+        image_file = request.FILES.get('image')
+        camera_location = request.data.get('camera_location', 'Principal')
+
+        if not image_file:
+            return Response(
+                {'error': 'La imagen es requerida como archivo'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. Enviar la imagen al worker local
         try:
-            # Obtener imagen del FormData
-            image_file = request.FILES.get('image')
-            camera_location = request.data.get('camera_location', 'Principal')
+            if not AI_WORKER_URL:
+                # Fallback de seguridad si la URL no está configurada
+                logger.error("AI_WORKER_URL no está configurada en las variables de entorno.")
+                return Response({'error': 'El servicio de IA no está configurado'}, status=503)
 
-            if not image_file:
-                return Response(
-                    {'error': 'La imagen es requerida como archivo'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            files = {'image': (image_file.name, image_file.read(), image_file.content_type)}
 
-            logger.info(f"Procesando reconocimiento facial - cámara: {camera_location}")
+            # El endpoint en tu worker.py
+            worker_endpoint = f"{AI_WORKER_URL}/recognize_face"
 
-            # USAR EL NUEVO MÉTODO QUE MANEJA ARCHIVOS DIRECTAMENTE
-            result = self.facial_service.recognize_face_from_file(image_file, camera_location)
+            # Hacemos la petición a tu PC
+            response = requests.post(worker_endpoint, files=files, timeout=60)  # Timeout de 60 segundos
+            response.raise_for_status()  # Lanza un error si la respuesta no es 2xx
 
-            # Crear reporte de seguridad si es necesario
-            if not result['is_resident']:
+            # El resultado que viene desde tu PC
+            result = response.json()
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error contactando al worker de IA: {e}")
+            return Response({'error': 'El servicio de IA no está disponible o tardó demasiado en responder'},
+                            status=503)
+
+        # 3. Usar el resultado para crear el Reporte de Seguridad (esta lógica se queda aquí)
+        try:
+            if not result.get('is_resident'):
                 ReporteSeguridad.objects.create(
                     tipo_evento='intruso_detectado',
-                    reconocimiento_facial_id=result['id'],
+                    reconocimiento_facial_id=result.get('id'),
                     descripcion=f"Persona no identificada detectada en {camera_location}",
                     nivel_alerta='alto'
                 )
 
-            logger.info(f"Reconocimiento completado - residente: {result['is_resident']}")
+            logger.info(f"Reconocimiento completado por el worker - residente: {result.get('is_resident')}")
             return Response(result, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.error(f"Error en reconocimiento facial: {e}")
+            # Este error ocurriría si hay un problema con la base de datos al guardar el reporte
+            logger.error(f"Error guardando el resultado del reconocimiento: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return Response(
-                {'error': 'Error interno del servidor'},
+                {'error': 'Error interno del servidor al procesar el resultado'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
