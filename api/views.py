@@ -14,7 +14,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from django.utils import timezone
 from datetime import timedelta
-from .services.ai_detection import FacialRecognitionService, PlateDetectionService
+
 from .services.supabase_storage import SupabaseStorageService
 import logging
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -751,8 +751,7 @@ class AIDetectionViewSet(viewsets.ViewSet):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.facial_service = FacialRecognitionService()
-        self.plate_service = PlateDetectionService()
+
         self.storage_service = SupabaseStorageService()
 
     # ============= RECONOCIMIENTO FACIAL =============
