@@ -14,7 +14,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from django.utils import timezone
 from datetime import timedelta
-
+from .permissions import IsAdminOrReadOnly
 from .services.supabase_storage import SupabaseStorageService
 import logging
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -487,10 +487,12 @@ class FinanzasViewSet(BaseModelViewSet):
     ordering_fields = ['id', 'fecha', 'monto']
 
 
+# En api/views.py
 class ComunicadosViewSet(BaseModelViewSet):
     queryset = Comunicados.objects.all().order_by('id')
     serializer_class = ComunicadosSerializer
-    filterset_fields = ['tipo', 'fecha', 'estado', 'codigousuario']
+    permission_classes = [IsAdminOrReadOnly] # <-- 2. REEMPLAZA EL PERMISO AQUÍ
+    filterset_fields = ['tipo', 'fecha', 'estado']
     search_fields = ['titulo', 'contenido', 'url', 'tipo', 'estado']
     ordering_fields = ['id', 'fecha']
 
