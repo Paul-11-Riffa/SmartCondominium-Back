@@ -29,6 +29,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum
+
 AI_WORKER_URL = os.getenv("AI_WORKER_URL")
 from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
@@ -214,6 +215,7 @@ class PropiedadViewSet(BaseModelViewSet):
             ip = request.META.get('REMOTE_ADDR')
         return ip
 
+
 class BitacoraMixin:
     def _bitacora(self, request, accion: str):
         try:
@@ -231,6 +233,7 @@ class BitacoraMixin:
     def _get_client_ip(self, request):
         xf = request.META.get("HTTP_X_FORWARDED_FOR")
         return xf.split(",")[0] if xf else request.META.get("REMOTE_ADDR")
+
 
 class MultaViewSet(BitacoraMixin, viewsets.ModelViewSet):
     queryset = Multa.objects.all().order_by("descripcion")
@@ -283,7 +286,6 @@ class PagoViewSet(BitacoraMixin, viewsets.ModelViewSet):
                 return resp
         except IntegrityError:
             return Response({"detail": "No se pudo actualizar el pago (conflicto en BD)."}, status=400)
-
 
 
 class NotificacionesViewSet(BaseModelViewSet):
@@ -452,6 +454,7 @@ class PerteneceViewSet(BaseModelViewSet):
             ip = request.META.get('REMOTE_ADDR')
         return ip
 
+
 class ListaVisitantesViewSet(BaseModelViewSet):
     queryset = ListaVisitantes.objects.all().order_by('id')
     serializer_class = ListaVisitantesSerializer
@@ -600,6 +603,7 @@ class LoginView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
+
 # CU02. Registrarse en el sistema
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -679,11 +683,12 @@ class RegisterView(APIView):
                 "correo": u.correo,
                 "sexo": u.sexo,
                 "telefono": u.telefono,
-                "estado": u.estado,    # lo que mandó el front o "pendiente"
-                "idrol": u.idrol_id,   # lo que mandó el front o 2
+                "estado": u.estado,  # lo que mandó el front o "pendiente"
+                "idrol": u.idrol_id,  # lo que mandó el front o 2
                 "rol": rol_obj,
             }
         }, status=status.HTTP_201_CREATED)
+
 
 # CU04. Cierre de sesion
 class LogoutView(APIView):
@@ -708,6 +713,7 @@ class LogoutView(APIView):
 
         return Response({"detail": detail}, status=status.HTTP_200_OK)
 
+
 # Agregar estos ViewSets al final de api/views.py, después de LogoutView y antes de AIDetectionViewSet:
 
 class ReconocimientoFacialViewSet(BaseModelViewSet):
@@ -721,7 +727,8 @@ class ReconocimientoFacialViewSet(BaseModelViewSet):
 class DeteccionPlacaViewSet(BaseModelViewSet):
     queryset = DeteccionPlaca.objects.all().order_by('-fecha_deteccion')
     serializer_class = DeteccionPlacaSerializer
-    filterset_fields = ['placa_detectada', 'vehiculo', 'es_autorizado', 'ubicacion_camara', 'tipo_acceso', 'fecha_deteccion']
+    filterset_fields = ['placa_detectada', 'vehiculo', 'es_autorizado', 'ubicacion_camara', 'tipo_acceso',
+                        'fecha_deteccion']
     search_fields = ['placa_detectada', 'ubicacion_camara', 'tipo_acceso']
     ordering_fields = ['id', 'fecha_deteccion', 'confianza']
 
@@ -868,7 +875,6 @@ class AIDetectionViewSet(viewsets.ViewSet):
                 'error': f'Error interno del servidor: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
     @action(detail=False, methods=['post'])
     def register_current_user(self, request):
         """Registra perfil facial del usuario autenticado actual"""
@@ -938,8 +944,6 @@ class AIDetectionViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': 'Error interno del servidor'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
 
     @action(detail=False, methods=['get'])
     def list_profiles(self, request):
@@ -1028,9 +1032,6 @@ class AIDetectionViewSet(viewsets.ViewSet):
                 'success': False,
                 'message': 'Error interno del servidor'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
 
     @action(detail=False, methods=['get'])
     def list_profiles(self, request):
@@ -1138,6 +1139,7 @@ class AIDetectionViewSet(viewsets.ViewSet):
                 {'error': 'Error interno del servidor'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
     # ============= ESTADÍSTICAS =============
     @action(detail=False, methods=['get'])
     def detection_stats(self, request):
@@ -1204,7 +1206,8 @@ def _bitacora(request, accion: str):
             accion=accion,
             fecha=timezone.now().date(),
             hora=timezone.now().time(),
-            ip=request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0] or request.META.get("REMOTE_ADDR") or "0.0.0.0",
+            ip=request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0] or request.META.get(
+                "REMOTE_ADDR") or "0.0.0.0",
         )
     except Usuario.DoesNotExist:
         pass
@@ -1241,12 +1244,10 @@ class EstadoCuentaView(APIView):
 
         # a) cat. Pagos vigentes (si tu tabla Pagos no tiene 'estado', elimina el filter(estado="activo"))
         pagos_catalogo_qs = Pagos.objects.all()
-        if hasattr(Pagos, "estado"):
-            pagos_catalogo_qs = pagos_catalogo_qs.filter(estado="activo")
 
         for p in pagos_catalogo_qs:
             cargos.append({
-                "tipo": p.tipo,                       # 'Cuota ordinaria', 'Servicio', etc.
+                "tipo": p.tipo,  # 'Cuota ordinaria', 'Servicio', etc.
                 "descripcion": p.descripcion,
                 "monto": p.monto,
                 "origen": "pago",
@@ -1274,16 +1275,16 @@ class EstadoCuentaView(APIView):
                     "fecha": dm.fecha_emi,
                 })
 
-        total_cargos = sum((Decimal(c["monto"]) for c in cargos), Decimal("0.00"))
+        total_cargos = sum((Decimal(c["monto"] or 0) for c in cargos), Decimal("0.00"))
 
         # 5) PAGOS del usuario en el mes (Facturas pagadas)
         pagos_qs = (
             Factura.objects
-            .filter(codigo_usuario=user, fecha__range=(desde, hasta), estado="pagado")
+            .filter(codigo_usuario=user, fecha__range=(desde, hasta), estado="pagado", id_pago__isnull=False)
             .select_related("id_pago", "codigo_usuario")
         )
 
-       # pagos_ser = PagoRealizadoSerializer(pagos_qs, many=True).data   # <- usar serializer de consulta
+        pagos_ser = PagoRealizadoSerializer(pagos_qs, many=True).data  # <- usar serializer de consulta
         total_pagos = pagos_qs.aggregate(s=Sum("id_pago__monto"))["s"] or Decimal("0.00")
 
         saldo = total_cargos - total_pagos
@@ -1300,8 +1301,8 @@ class EstadoCuentaView(APIView):
             "mes": mes,
             "propiedades": props_desc,
             "cargos": cargos,
-           # "pagos": pagos_ser,
-            "pagos" : pagos_qs,
+            "pagos": pagos_ser,
+            # "pagos" : pagos_qs,
             "totales": {
                 "cargos": f"{total_cargos:.2f}",
                 "pagos": f"{total_pagos:.2f}",
@@ -1310,7 +1311,7 @@ class EstadoCuentaView(APIView):
             "mensaje": mensaje,
         }
         # Validamos contra el envelope final antes de responder
-        return Response(EstadoCuentaSerializer(payload).data, status=200)
+        return Response(payload, status=200)
 
 
 # -------- Endpoint: PDF Comprobante ----------

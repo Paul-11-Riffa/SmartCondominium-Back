@@ -55,14 +55,12 @@ class MultaSerializer(serializers.ModelSerializer):
 
 
 
-
 class PagoSerializer(serializers.ModelSerializer):
     monto = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
 
     class Meta:
         model = Pagos
-        # Si tu modelo tiene 'estado', déjalo en fields; si no, quítalo sin problema.
-        fields = ("id", "tipo", "descripcion", "monto", "estado") if hasattr(Pagos, "estado") else ("id", "tipo", "descripcion", "monto")
+        fields = ("id", "tipo", "descripcion", "monto")
 
     def validate(self, attrs):
         tipo = attrs.get("tipo") or getattr(self.instance, "tipo", None)
