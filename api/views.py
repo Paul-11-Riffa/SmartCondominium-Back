@@ -15,6 +15,7 @@ from rest_framework.decorators import action
 from django.utils import timezone
 from datetime import timedelta
 from .permissions import IsAdminOrReadOnly
+from .permissions import IsAdmin
 from .services.supabase_storage import SupabaseStorageService
 import logging
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -299,10 +300,43 @@ class NotificacionesViewSet(BaseModelViewSet):
 class AreasComunesViewSet(BaseModelViewSet):
     queryset = AreasComunes.objects.all().order_by('id')
     serializer_class = AreasComunesSerializer
-    filterset_fields = ['estado', 'capacidadmax', 'costo']
+    filterset_fields = ['estado', 'capacidad_max', 'costo'] # <-- Corregido
     search_fields = ['descripcion', 'estado']
-    ordering_fields = ['id', 'capacidadmax', 'costo']
+    ordering_fields = ['id', 'capacidad_max', 'costo'] # <-- Corregido
 
+    @action(detail=True, methods=['get'])
+    def disponibilidad(self, request, pk=None):
+        """
+        Endpoint para obtener los horarios disponibles de un área común en una fecha específica.
+        Uso: /api/areas-comunes/1/disponibilidad/?fecha=2025-12-31
+        """
+        try:
+            fecha_str = request.query_params.get('fecha')
+            if not fecha_str:
+                return Response({'error': 'Debe proporcionar una fecha en formato YYYY-MM-DD.'}, status=400)
+
+            fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            area = self.get_object()
+
+            # --- LÓGICA DE DISPONIBILIDAD MEJORADA ---
+            # Un área solo está ocupada si hay una reserva en estado 'Aprobada'.
+            reservas_aprobadas = Reserva.objects.filter(idareac=area, fecha=fecha_obj, estado='Aprobada')
+
+            disponible = not reservas_aprobadas.exists()
+
+            return Response({
+                'area_id': area.id,
+                'area_descripcion': area.descripcion,
+                'fecha_consultada': fecha_obj.isoformat(),
+                'disponible': disponible,
+            })
+
+        except ValueError:
+            return Response({'error': 'Formato de fecha inválido. Use YYYY-MM-DD.'}, status=400)
+        except AreasComunes.DoesNotExist:
+            return Response({'error': 'Área común no encontrada.'}, status=404)
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
 
 class TareasViewSet(BaseModelViewSet):
     queryset = Tareas.objects.all().order_by('id')
@@ -504,14 +538,92 @@ class HorariosViewSet(BaseModelViewSet):
     search_fields = []
     ordering_fields = ['id', 'horaini', 'horafin']
 
-
 class ReservaViewSet(BaseModelViewSet):
-    queryset = Reserva.objects.all().order_by('id')
+    queryset = Reserva.objects.all().order_by('-fecha')
     serializer_class = ReservaSerializer
-    filterset_fields = ['codigousuario', 'idareac', 'fecha', 'estado']
+    # CORREGIDO: Nombres de campos con guion bajo
+    filterset_fields = ['codigo_usuario', 'id_area_c', 'fecha', 'estado']
     search_fields = ['estado']
     ordering_fields = ['id', 'fecha']
 
+    def get_queryset(self):
+        user = self.request.user
+        queryset = super().get_queryset()
+        try:
+            usuario_actual = Usuario.objects.get(correo=user.email)
+            if usuario_actual.idrol and usuario_actual.idrol.tipo != 'admin':
+                # CORREGIDO: 'codigo_usuario' con guion bajo
+                queryset = queryset.filter(codigo_usuario=usuario_actual)
+        except Usuario.DoesNotExist:
+            return queryset.none()
+        return queryset
+
+    def perform_create(self, serializer):
+        """
+        Asigna automáticamente el usuario actual a la reserva al momento de crearla.
+        """
+        try:
+            # Busca nuestro modelo 'Usuario' a partir del usuario autenticado
+            usuario_actual = Usuario.objects.get(correo=self.request.user.email)
+            # Guarda la reserva asociándola con este usuario
+            serializer.save(codigo_usuario=usuario_actual)
+        except Usuario.DoesNotExist:
+            # Esto previene errores si el usuario no está en nuestro catálogo
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("El usuario no existe en el sistema de condominio.")
+
+    def create(self, request, *args, **kwargs):
+        id_area_c_val = request.data.get('id_area_c')
+        fecha_str = request.data.get('fecha')
+
+        if not id_area_c_val or not fecha_str:
+            return Response({'detail': 'Se requiere el área común y la fecha.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'detail': 'El formato de fecha debe ser YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        conflicto = Reserva.objects.filter(id_area_c_id=id_area_c_val, fecha=fecha_obj, estado='Aprobada').exists()
+        if conflicto:
+            return Response({'detail': 'Esta área ya tiene una reserva aprobada para la fecha seleccionada.'},
+                            status=status.HTTP_409_CONFLICT)
+
+        # Hacemos una copia mutable para poder modificarla
+        mutable_data = request.data.copy()
+        mutable_data['estado'] = 'Pendiente'
+
+        # Pasamos los datos modificados para la validación y creación
+        serializer = self.get_serializer(data=mutable_data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=True, methods=['patch'], permission_classes=[IsAdmin])
+    def update_status(self, request, pk=None):
+        reserva = self.get_object()
+        nuevo_estado = request.data.get('estado')
+
+        if nuevo_estado not in ['Aprobada', 'Rechazada']:
+            return Response({'error': 'El estado solo puede ser "Aprobada" o "Rechazada".'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if nuevo_estado == 'Aprobada':
+            conflicto = Reserva.objects.filter(
+                id_area_c=reserva.id_area_c,
+                fecha=reserva.fecha,
+                estado='Aprobada'
+            ).exclude(pk=pk).exists()
+
+            if conflicto:
+                return Response(
+                    {'error': 'No se puede aprobar. Ya existe otra reserva aprobada para esta fecha y área.'},
+                    status=status.HTTP_409_CONFLICT)
+
+        reserva.estado = nuevo_estado
+        reserva.save()
+        serializer = self.get_serializer(reserva)
+        return Response(serializer.data)
 
 class AsignacionViewSet(BaseModelViewSet):
     queryset = Asignacion.objects.all().order_by('id')
