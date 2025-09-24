@@ -1,21 +1,33 @@
-# En: api/permissions.py
+# En api/permissions.py
 
 from rest_framework import permissions
 from .models import Usuario
 
-class IsAdminOrReadOnly(permissions.BasePermission):
+class IsAdmin(permissions.BasePermission):
     """
-    Permiso personalizado para permitir que solo los administradores creen/editen/borren.
-    El resto de los usuarios (residentes) solo tendrán acceso de lectura.
+    Permiso personalizado para permitir acceso solo a usuarios con rol de administrador.
     """
     def has_permission(self, request, view):
-        # Los permisos de lectura (GET, HEAD, OPTIONS) se permiten a cualquier usuario autenticado.
+        if not request.user or not request.user.is_authenticated:
+            return False
+        try:
+            # Verificamos en nuestro modelo Usuario si el rol es de tipo 'admin'
+            usuario = Usuario.objects.get(correo=request.user.email)
+            return usuario.idrol and usuario.idrol.tipo == 'admin'
+        except Usuario.DoesNotExist:
+            return False
+
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """
+    Permiso para permitir que solo los admins creen/editen, pero todos lean.
+    """
+    def has_permission(self, request, view):
         if request.method in permissions.SAFE_METHODS:
             return True
-
-        # Los permisos de escritura (POST, PUT, DELETE) solo se permiten si el usuario es un administrador.
+        # Para métodos no seguros (POST, PUT, DELETE), usamos nuestra lógica IsAdmin.
+        if not request.user or not request.user.is_authenticated:
+            return False
         try:
-            # Buscamos al usuario en nuestro modelo Usuario para verificar su rol
             usuario = Usuario.objects.get(correo=request.user.email)
             return usuario.idrol and usuario.idrol.tipo == 'admin'
         except Usuario.DoesNotExist:
