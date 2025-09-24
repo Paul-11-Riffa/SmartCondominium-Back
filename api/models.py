@@ -71,17 +71,17 @@ class Multa(models.Model):
 
 
 
+# En api/models.py
+
 class Pagos(models.Model):
     id = models.SmallAutoField(primary_key=True, db_column="Id")
     tipo = models.TextField(db_column="Tipo", null=True, blank=True)
     descripcion = models.TextField(db_column="Descripcion", null=True, blank=True)
     monto = models.DecimalField(max_digits=12, decimal_places=2, db_column="Monto", null=True, blank=True)
-    estado = models.TextField(db_column="Estado", null=True, blank=True)  # <- NUEVO
 
     class Meta:
         managed = False
         db_table = "Pagos"
-
 
 
 class Notificaciones(models.Model):
