@@ -343,6 +343,7 @@ class AreasComunesViewSet(BaseModelViewSet):
 
 
 class TareasViewSet(BaseModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = Tareas.objects.all().order_by('id')
     serializer_class = TareasSerializer
     filterset_fields = ['tipo', 'vigencia', 'costos']
@@ -678,9 +679,10 @@ class ReservaViewSet(BaseModelViewSet):
 
 
 class AsignacionViewSet(BaseModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = Asignacion.objects.all().order_by('id')
     serializer_class = AsignacionSerializer
-    filterset_fields = ['codigousuario', 'idtarea', 'fechaini', 'fechafin', 'estado']
+    filterset_fields = ['codigo_usuario', 'id_tarea', 'fecha_ini', 'fecha_fin', 'estado']
     search_fields = ['descripcion', 'dificultades', 'estado']
     ordering_fields = ['id', 'fechaini', 'fechafin', 'costo']
 
