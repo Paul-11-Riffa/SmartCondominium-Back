@@ -348,13 +348,27 @@ class TareasViewSet(BaseModelViewSet):
 
 
 class VehiculoViewSet(BaseModelViewSet):
-    queryset = Vehiculo.objects.all().order_by('id')
     serializer_class = VehiculoSerializer
-    filterset_fields = ['estado', 'nroplaca']
-    search_fields = ['nroplaca', 'descripcion', 'estado']
+    filterset_fields = ['estado', 'nro_placa', 'codigo_usuario'] # <-- CAMBIADO
+    search_fields = ['nro_placa', 'descripcion', 'estado']
     ordering_fields = ['id']
 
+    def get_queryset(self):
+        try:
+            usuario = Usuario.objects.get(correo=self.request.user.email)
+            if usuario.idrol and usuario.idrol.tipo == 'admin':
+                return Vehiculo.objects.all().order_by('id')
+            return Vehiculo.objects.filter(codigo_usuario=usuario).order_by('id')
+        except Usuario.DoesNotExist:
+            return Vehiculo.objects.none()
 
+    def perform_create(self, serializer):
+        try:
+            usuario = Usuario.objects.get(correo=self.request.user.email)
+            serializer.save(codigo_usuario=usuario, estado='activo')
+        except Usuario.DoesNotExist:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Tu usuario no está registrado en el catálogo para realizar esta acción.")
 # ---------------------------------------------------------------------
 # Entidades con FK
 # ---------------------------------------------------------------------

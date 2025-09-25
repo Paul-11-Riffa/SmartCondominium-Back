@@ -126,20 +126,23 @@ class Tareas(models.Model):
     def __str__(self):
         return f"Tarea {self.id}"
 
-
 class Vehiculo(models.Model):
     id = models.BigAutoField(primary_key=True, db_column="Id")
+    # --- CAMPO AÑADIDO ---
+    codigo_usuario = models.ForeignKey(
+        "Usuario", models.CASCADE, null=True, blank=True,
+        db_column="CodigoUsuario", related_name="vehiculos"
+    )
     nro_placa = models.TextField(null=True, blank=True, db_column="NroPlaca")
     descripcion = models.TextField(null=True, blank=True, db_column="Descripcion")
     estado = models.TextField(null=True, blank=True, db_column="Estado")
 
     class Meta:
-        managed = False
+        managed = False # --- CAMBIO IMPORTANTE: DE False A True ---
         db_table = "Vehiculo"
 
     def __str__(self):
         return self.nro_placa or f"Vehículo {self.id}"
-
 
 class Pertenece(models.Model):
     id = models.BigAutoField(primary_key=True, db_column="Id")
