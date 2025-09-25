@@ -1,6 +1,7 @@
 from decimal import Decimal
 import requests
 import os
+import json
 from django.http import FileResponse, Http404
 from rest_framework import viewsets, permissions
 from django_filters.rest_framework import DjangoFilterBackend
@@ -492,9 +493,39 @@ class PerteneceViewSet(BaseModelViewSet):
 class ListaVisitantesViewSet(BaseModelViewSet):
     queryset = ListaVisitantes.objects.all().order_by('id')
     serializer_class = ListaVisitantesSerializer
-    filterset_fields = ['codigopropiedad', 'fechaini', 'fechafin', 'carnet']
+    filterset_fields = ['codigo_propiedad', 'fecha_ini', 'fecha_fin', 'carnet']
     search_fields = ['nombre', 'apellido', 'carnet', 'motivovisita']
     ordering_fields = ['id', 'fechaini', 'fechafin']
+
+    # --- MÉTODO NUEVO: GENERAR PASE DE ACCESO ---
+    @action(detail=True, methods=['get'])
+    def generar_pase(self, request, pk=None):
+        """
+        Genera una cadena de datos JSON para ser usada en un código QR.
+        """
+        try:
+            visitante = self.get_object()
+            propiedad = visitante.codigo_propiedad
+
+            pass_data = {
+                "type": "ACCESS_PASS",
+                "visitante_id": visitante.id,
+                "nombre": f"{visitante.nombre} {visitante.apellido}",
+                "carnet": visitante.carnet,
+                "propiedad_destino": f"Casa {propiedad.nro_casa}, Piso {propiedad.piso}",
+                "valido_desde": visitante.fecha_ini.isoformat(),
+                "valido_hasta": visitante.fecha_fin.isoformat(),
+            }
+
+            # Convertimos el diccionario a un string JSON
+            qr_string = json.dumps(pass_data, ensure_ascii=False)
+
+            return Response({'qr_data': qr_string}, status=status.HTTP_200_OK)
+
+        except ListaVisitantes.DoesNotExist:
+            return Response({'error': 'Visitante no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class DetalleMultaViewSet(BaseModelViewSet):
