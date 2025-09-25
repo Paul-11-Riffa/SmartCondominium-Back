@@ -502,3 +502,29 @@ class ReporteSeguridad(models.Model):
 
     def __str__(self):
         return f"Reporte {self.tipo_evento} - {self.fecha_evento}"
+
+class SolicitudMantenimiento(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column="Id")
+    codigo_usuario = models.ForeignKey(
+        Usuario, on_delete=models.CASCADE, db_column="CodigoUsuario", related_name="solicitudes_mantenimiento"
+    )
+    codigo_propiedad = models.ForeignKey(
+        Propiedad, on_delete=models.CASCADE, db_column="CodigoPropiedad", related_name="solicitudes_mantenimiento"
+    )
+    titulo = models.TextField(db_column="Titulo")
+    descripcion = models.TextField(db_column="Descripcion")
+    fecha_solicitud = models.DateTimeField(auto_now_add=True, db_column="FechaSolicitud")
+    estado = models.TextField(
+        choices=[('Pendiente', 'Pendiente'), ('En Progreso', 'En Progreso'), ('Completada', 'Completada'), ('Cancelada', 'Cancelada')],
+        default='Pendiente',
+        db_column="Estado"
+    )
+    # Opcional: para guardar una foto del problema
+    foto_url = models.URLField(null=True, blank=True, db_column="FotoUrl")
+
+    class Meta:
+        db_table = "SolicitudMantenimiento"
+        ordering = ['-fecha_solicitud']
+
+    def __str__(self):
+        return f"Solicitud de {self.titulo} - {self.codigo_usuario.nombre}"

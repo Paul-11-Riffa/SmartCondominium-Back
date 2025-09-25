@@ -5,7 +5,7 @@ from .views import (
     RolViewSet, UsuarioViewSet, PropiedadViewSet, MultaViewSet, PagoViewSet,
     NotificacionesViewSet, AreasComunesViewSet, TareasViewSet, VehiculoViewSet,
     PerteneceViewSet, ListaVisitantesViewSet, DetalleMultaViewSet, FacturaViewSet,
-    FinanzasViewSet, ComunicadosViewSet, HorariosViewSet, ReservaViewSet,
+    FinanzasViewSet, ComunicadosViewSet, HorariosViewSet, ReservaViewSet, SolicitudMantenimientoViewSet,
     AsignacionViewSet, EnvioViewSet, RegistroViewSet, BitacoraViewSet,
     LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
     PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView
@@ -32,6 +32,7 @@ router.register(r'reservas', ReservaViewSet)
 router.register(r'asignaciones', AsignacionViewSet)
 router.register(r'envios', EnvioViewSet)
 router.register(r'registros', RegistroViewSet)
+router.register(r'solicitudes-mantenimiento', SolicitudMantenimientoViewSet, basename='solicitud-mantenimiento')
 router.register(r'bitacora', BitacoraViewSet)
 router.register(r'ai-detection', AIDetectionViewSet, basename='ai-detection')
 router.register(r'reconocimientos-faciales', ReconocimientoFacialViewSet)

@@ -37,7 +37,7 @@ from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
     Vehiculo, Pertenece, ListaVisitantes, DetalleMulta, Factura, Finanzas,
     Comunicados, Horarios, Reserva, Asignacion, Envio, Registro, Bitacora,
-    PerfilFacial, ReconocimientoFacial, DeteccionPlaca, ReporteSeguridad
+    PerfilFacial, ReconocimientoFacial, DeteccionPlaca, ReporteSeguridad, SolicitudMantenimiento
 )
 from .serializers import (
     RolSerializer, UsuarioSerializer, PropiedadSerializer, MultaSerializer,
@@ -46,7 +46,7 @@ from .serializers import (
     FacturaSerializer, FinanzasSerializer, ComunicadosSerializer, HorariosSerializer,
     ReservaSerializer, AsignacionSerializer, EnvioSerializer, RegistroSerializer,
     BitacoraSerializer, ReconocimientoFacialSerializer, PerfilFacialSerializer, DeteccionPlacaSerializer,
-    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer
+    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer, SolicitudMantenimientoSerializer
 )
 
 
@@ -303,9 +303,9 @@ class NotificacionesViewSet(BaseModelViewSet):
 class AreasComunesViewSet(BaseModelViewSet):
     queryset = AreasComunes.objects.all().order_by('id')
     serializer_class = AreasComunesSerializer
-    filterset_fields = ['estado', 'capacidad_max', 'costo'] # <-- Corregido
+    filterset_fields = ['estado', 'capacidad_max', 'costo']  # <-- Corregido
     search_fields = ['descripcion', 'estado']
-    ordering_fields = ['id', 'capacidad_max', 'costo'] # <-- Corregido
+    ordering_fields = ['id', 'capacidad_max', 'costo']  # <-- Corregido
 
     @action(detail=True, methods=['get'])
     def disponibilidad(self, request, pk=None):
@@ -341,6 +341,7 @@ class AreasComunesViewSet(BaseModelViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=500)
 
+
 class TareasViewSet(BaseModelViewSet):
     queryset = Tareas.objects.all().order_by('id')
     serializer_class = TareasSerializer
@@ -351,7 +352,7 @@ class TareasViewSet(BaseModelViewSet):
 
 class VehiculoViewSet(BaseModelViewSet):
     serializer_class = VehiculoSerializer
-    filterset_fields = ['estado', 'nro_placa', 'codigo_usuario'] # <-- CAMBIADO
+    filterset_fields = ['estado', 'nro_placa', 'codigo_usuario']  # <-- CAMBIADO
     search_fields = ['nro_placa', 'descripcion', 'estado']
     ordering_fields = ['id']
 
@@ -371,6 +372,8 @@ class VehiculoViewSet(BaseModelViewSet):
         except Usuario.DoesNotExist:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Tu usuario no está registrado en el catálogo para realizar esta acción.")
+
+
 # ---------------------------------------------------------------------
 # Entidades con FK
 # ---------------------------------------------------------------------
@@ -572,7 +575,7 @@ class FinanzasViewSet(BaseModelViewSet):
 class ComunicadosViewSet(BaseModelViewSet):
     queryset = Comunicados.objects.all().order_by('id')
     serializer_class = ComunicadosSerializer
-    permission_classes = [IsAdminOrReadOnly] # <-- 2. REEMPLAZA EL PERMISO AQUÍ
+    permission_classes = [IsAdminOrReadOnly]  # <-- 2. REEMPLAZA EL PERMISO AQUÍ
     filterset_fields = ['tipo', 'fecha', 'estado']
     search_fields = ['titulo', 'contenido', 'url', 'tipo', 'estado']
     ordering_fields = ['id', 'fecha']
@@ -584,6 +587,7 @@ class HorariosViewSet(BaseModelViewSet):
     filterset_fields = ['idareac', 'horaini', 'horafin']
     search_fields = []
     ordering_fields = ['id', 'horaini', 'horafin']
+
 
 class ReservaViewSet(BaseModelViewSet):
     queryset = Reserva.objects.all().order_by('-fecha')
@@ -671,6 +675,7 @@ class ReservaViewSet(BaseModelViewSet):
         reserva.save()
         serializer = self.get_serializer(reserva)
         return Response(serializer.data)
+
 
 class AsignacionViewSet(BaseModelViewSet):
     queryset = Asignacion.objects.all().order_by('id')
@@ -1526,3 +1531,49 @@ class ComprobantePDFView(APIView):
         _bitacora(request, f"Descarga comprobante #{factura.id}")
 
         return FileResponse(buff, as_attachment=True, filename=f"comprobante_{factura.id}.pdf")
+
+
+class SolicitudMantenimientoViewSet(BaseModelViewSet):
+    serializer_class = SolicitudMantenimientoSerializer
+
+    def get_queryset(self):
+        """
+        Admins ven todas las solicitudes.
+        Residentes ven solo las suyas.
+        """
+        try:
+            usuario = Usuario.objects.get(correo=self.request.user.email)
+            if usuario.idrol and usuario.idrol.tipo == 'admin':
+                return SolicitudMantenimiento.objects.all()
+            return SolicitudMantenimiento.objects.filter(codigo_usuario=usuario)
+        except Usuario.DoesNotExist:
+            return SolicitudMantenimiento.objects.none()
+
+    def perform_create(self, serializer):
+        """
+        Asigna automáticamente el usuario y su propiedad al crear la solicitud.
+        """
+        try:
+            usuario = Usuario.objects.get(correo=self.request.user.email)
+            # Buscamos la propiedad activa del usuario
+            pertenencia_activa = Pertenece.objects.filter(codigo_usuario=usuario, fecha_fin__isnull=True).first()
+            if not pertenencia_activa:
+                raise serializers.ValidationError("No tienes una propiedad activa asignada para crear una solicitud.")
+
+            serializer.save(codigo_usuario=usuario, codigo_propiedad=pertenencia_activa.codigo_propiedad)
+        except Usuario.DoesNotExist:
+            raise serializers.ValidationError("Usuario no encontrado.")
+
+    @action(detail=True, methods=['patch'], permission_classes=[IsAdmin])
+    def update_status(self, request, pk=None):
+        """
+        Endpoint solo para admins para cambiar el estado de una solicitud.
+        """
+        solicitud = self.get_object()
+        nuevo_estado = request.data.get('estado')
+        if nuevo_estado not in ['En Progreso', 'Completada', 'Cancelada']:
+            return Response({'error': 'Estado no válido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        solicitud.estado = nuevo_estado
+        solicitud.save()
+        return Response(self.get_serializer(solicitud).data)
