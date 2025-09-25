@@ -71,6 +71,7 @@ class RolViewSet(BaseModelViewSet):
 
 
 class PropiedadViewSet(BaseModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = Propiedad.objects.all().order_by('nro_casa', 'piso')
     serializer_class = PropiedadSerializer
     filterset_fields = ['nro_casa', 'piso', 'descripcion']
