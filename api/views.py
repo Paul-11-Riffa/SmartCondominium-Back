@@ -302,6 +302,7 @@ class NotificacionesViewSet(BaseModelViewSet):
 
 
 class AreasComunesViewSet(BaseModelViewSet):
+    permission_classes = [IsAdminOrReadOnly]
     queryset = AreasComunes.objects.all().order_by('id')
     serializer_class = AreasComunesSerializer
     filterset_fields = ['estado', 'capacidad_max', 'costo']  # <-- Corregido
@@ -585,12 +586,12 @@ class ComunicadosViewSet(BaseModelViewSet):
 
 
 class HorariosViewSet(BaseModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = Horarios.objects.all().order_by('id')
     serializer_class = HorariosSerializer
-    filterset_fields = ['idareac', 'horaini', 'horafin']
+    filterset_fields = ['id_area_c', 'hora_ini', 'hora_fin']
     search_fields = []
-    ordering_fields = ['id', 'horaini', 'horafin']
-
+    ordering_fields = ['id', 'hora_ini', 'hora_fin']
 
 class ReservaViewSet(BaseModelViewSet):
     queryset = Reserva.objects.all().order_by('-fecha')
