@@ -239,6 +239,7 @@ class BitacoraMixin:
 
 
 class MultaViewSet(BitacoraMixin, viewsets.ModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = Multa.objects.all().order_by("descripcion")
     serializer_class = MultaSerializer
     search_fields = ["descripcion"]
@@ -549,11 +550,12 @@ class ListaVisitantesViewSet(BaseModelViewSet):
 
 
 class DetalleMultaViewSet(BaseModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = DetalleMulta.objects.all().order_by('id')
     serializer_class = DetalleMultaSerializer
-    filterset_fields = ['codigo_propiedad', 'idmulta', 'fechaemi', 'fechalim']
+    filterset_fields = ['codigo_propiedad', 'id_multa', 'fecha_emi', 'fecha_lim']
     search_fields = []
-    ordering_fields = ['id', 'fechaemi', 'fechalim']
+    ordering_fields = ['id', 'fecha_emi', 'fecha_lim']
 
 
 class FacturaViewSet(BaseModelViewSet):
@@ -1427,7 +1429,7 @@ class EstadoCuentaView(APIView):
             multas_qs = (
                 DetalleMulta.objects
                 .filter(codigo_propiedad__in=[pp.codigo for pp in propiedades],
-                        fechaemi__range=(desde, hasta))
+                        fecha_emi__range=(desde, hasta))
                 .select_related("id_multa", "codigo_propiedad")
             )
             for dm in multas_qs:

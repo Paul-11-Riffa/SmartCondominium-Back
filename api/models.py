@@ -66,7 +66,7 @@ class Multa(models.Model):
     estado = models.TextField(db_column="Estado", null=True, blank=True)  # <- NUEVO
 
     class Meta:
-        managed = False
+        managed = True
         db_table = "Multa"
 
 
