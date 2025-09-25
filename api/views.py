@@ -266,6 +266,7 @@ class MultaViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
 
 class PagoViewSet(BitacoraMixin, viewsets.ModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = Pagos.objects.all().order_by("tipo", "descripcion")
     serializer_class = PagoSerializer
     search_fields = ["tipo", "descripcion"]
