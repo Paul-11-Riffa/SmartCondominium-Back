@@ -528,3 +528,28 @@ class SolicitudMantenimiento(models.Model):
 
     def __str__(self):
         return f"Solicitud de {self.titulo} - {self.codigo_usuario.nombre}"
+
+
+# Agrégalo al final de api/models.py
+
+class MantenimientoPreventivo(models.Model):
+    id = models.BigAutoField(primary_key=True, db_column="Id")
+    id_tarea = models.ForeignKey(
+        Tareas, on_delete=models.CASCADE, db_column="IdTarea", related_name="programaciones"
+    )
+    frecuencia_dias = models.IntegerField(db_column="FrecuenciaDias")
+    fecha_inicio = models.DateField(db_column="FechaInicio")
+    proxima_fecha = models.DateField(db_column="ProximaFecha")
+    estado = models.TextField(
+        choices=[('activo', 'Activo'), ('inactivo', 'Inactivo')],
+        default='activo',
+        db_column="Estado"
+    )
+    descripcion_adicional = models.TextField(null=True, blank=True, db_column="DescripcionAdicional")
+
+    class Meta:
+        db_table = "MantenimientoPreventivo"
+        ordering = ['proxima_fecha']
+
+    def __str__(self):
+        return f"Programación de '{self.id_tarea.descripcion}' cada {self.frecuencia_dias} días"

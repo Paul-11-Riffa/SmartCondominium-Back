@@ -47,7 +47,8 @@ from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
     Vehiculo, Pertenece, ListaVisitantes, DetalleMulta, Factura, Finanzas,
     Comunicados, Horarios, Reserva, Asignacion, Envio, Registro, Bitacora,
-    PerfilFacial, ReconocimientoFacial, DeteccionPlaca, ReporteSeguridad, SolicitudMantenimiento
+    PerfilFacial, ReconocimientoFacial, DeteccionPlaca, ReporteSeguridad, SolicitudMantenimiento,
+    MantenimientoPreventivo
 )
 from .serializers import (
     RolSerializer, UsuarioSerializer, PropiedadSerializer, MultaSerializer,
@@ -56,7 +57,8 @@ from .serializers import (
     FacturaSerializer, FinanzasSerializer, ComunicadosSerializer, HorariosSerializer,
     ReservaSerializer, AsignacionSerializer, EnvioSerializer, RegistroSerializer,
     BitacoraSerializer, ReconocimientoFacialSerializer, PerfilFacialSerializer, DeteccionPlacaSerializer,
-    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer, SolicitudMantenimientoSerializer
+    ReporteSeguridadSerializer, EstadoCuentaSerializer, PagoRealizadoSerializer, SolicitudMantenimientoSerializer,
+    MantenimientoPreventivoSerializer
 )
 
 
@@ -602,6 +604,7 @@ class HorariosViewSet(BaseModelViewSet):
     filterset_fields = ['id_area_c', 'hora_ini', 'hora_fin']
     search_fields = []
     ordering_fields = ['id', 'hora_ini', 'hora_fin']
+
 
 class ReservaViewSet(BaseModelViewSet):
     queryset = Reserva.objects.all().order_by('-fecha')
@@ -1594,7 +1597,6 @@ class SolicitudMantenimientoViewSet(BaseModelViewSet):
         return Response(self.get_serializer(solicitud).data)
 
 
-
 import traceback
 
 
@@ -1710,6 +1712,20 @@ class ReporteUsoAreasComunesView(APIView):
 
 from django.http import JsonResponse
 
+
 def test_view(request):
     """Una vista de prueba muy simple."""
     return JsonResponse({"mensaje": "¡La URL de prueba funciona!"})
+
+
+class MantenimientoPreventivoViewSet(BaseModelViewSet):
+    """
+    Gestiona la programación de mantenimientos preventivos.
+    Solo accesible para administradores.
+    """
+    queryset = MantenimientoPreventivo.objects.all()
+    serializer_class = MantenimientoPreventivoSerializer
+    permission_classes = [IsAdmin] # Solo los admins pueden gestionar esto
+    filterset_fields = ['estado', 'id_tarea', 'proxima_fecha']
+    search_fields = ['id_tarea__descripcion', 'descripcion_adicional']
+    ordering_fields = ['proxima_fecha', 'fecha_inicio', 'frecuencia_dias']

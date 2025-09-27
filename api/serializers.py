@@ -3,7 +3,8 @@ from .models import (
     Rol, Usuario, Propiedad, Multa, Pagos, Notificaciones, AreasComunes, Tareas,
     Vehiculo, Pertenece, ListaVisitantes, DetalleMulta, Factura, Finanzas,
     Comunicados, Horarios, Reserva, Asignacion, Envio, Registro, Bitacora,
-    PerfilFacial, ReconocimientoFacial, DeteccionPlaca, ReporteSeguridad, SolicitudMantenimiento
+    PerfilFacial, ReconocimientoFacial, DeteccionPlaca, ReporteSeguridad, SolicitudMantenimiento,
+    MantenimientoPreventivo
 )
 
 
@@ -269,3 +270,20 @@ class SolicitudMantenimientoSerializer(serializers.ModelSerializer):
         model = SolicitudMantenimiento
         fields = '__all__'
         read_only_fields = ('codigo_usuario', 'codigo_propiedad', 'fecha_solicitud', 'estado')
+
+
+class MantenimientoPreventivoSerializer(serializers.ModelSerializer):
+    # Campos de solo lectura para mostrar información de la tarea relacionada
+    tarea_descripcion = serializers.CharField(source='id_tarea.descripcion', read_only=True)
+    tarea_tipo = serializers.CharField(source='id_tarea.tipo', read_only=True)
+
+    class Meta:
+        model = MantenimientoPreventivo
+        fields = '__all__'
+        # Hacemos 'proxima_fecha' de solo lectura porque se calculará automáticamente
+        read_only_fields = ('proxima_fecha',)
+
+    def create(self, validated_data):
+        # Al crear, la primera "próxima fecha" es la misma que la fecha de inicio
+        validated_data['proxima_fecha'] = validated_data.get('fecha_inicio')
+        return super().create(validated_data)
