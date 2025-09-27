@@ -10,7 +10,7 @@ from .views import (
     AsignacionViewSet, EnvioViewSet, RegistroViewSet, BitacoraViewSet,
     LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
     PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView,
-    ReporteUsoAreasComunesView, test_view, MantenimientoPreventivoViewSet
+    ReporteUsoAreasComunesView, test_view, MantenimientoPreventivoViewSet, PagarCuotaView, StripeWebhookView
 )
 
 router = DefaultRouter()
@@ -55,4 +55,6 @@ urlpatterns = [
 
     # Tu nueva ruta para el reporte de áreas comunes
     path("reporte/", ReporteUsoAreasComunesView.as_view(), name="reporte-uso-areas"),
+    path("pagar-cuota/", PagarCuotaView.as_view(), name="pagar-cuota"),
+    path("stripe-webhook/", StripeWebhookView.as_view(), name="stripe-webhook"),
 ]
