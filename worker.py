@@ -20,16 +20,19 @@ app = FastAPI()
 facial_service = FacialRecognitionService()
 plate_service = PlateDetectionService()
 
+
 @app.post("/recognize_face")
-async def recognize_face_endpoint(image: UploadFile = File(...)):
+def recognize_face_endpoint(image: UploadFile = File(...)):
     # Pasamos el archivo directamente al servicio.
     result = facial_service.recognize_face_from_file(image.file)
     return result
 
+
 @app.post("/detect_plate")
-async def detect_plate_endpoint(image: UploadFile = File(...)):
+def detect_plate_endpoint(image: UploadFile = File(...)):
     result = plate_service.detect_plate_from_file(image.file)
     return result
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)

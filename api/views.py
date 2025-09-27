@@ -936,6 +936,8 @@ class ReporteSeguridadViewSet(BaseModelViewSet):
 
 logger = logging.getLogger(__name__)
 
+from .services.ai_detection import FacialRecognitionService, PlateDetectionService
+
 
 class AIDetectionViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
@@ -945,6 +947,8 @@ class AIDetectionViewSet(viewsets.ViewSet):
         super().__init__(*args, **kwargs)
 
         self.storage_service = SupabaseStorageService()
+        self.facial_service = FacialRecognitionService()
+        self.plate_service = PlateDetectionService()
 
     # ============= RECONOCIMIENTO FACIAL =============
     @action(detail=False, methods=['post'])
@@ -1167,55 +1171,39 @@ class AIDetectionViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=['delete'])
     def delete_profile(self, request, pk=None):
-        """Elimina un perfil facial específico"""
+        """Elimina un perfil facial"""
         try:
-            profile = PerfilFacial.objects.get(id=pk, activo=True)
+            perfil = PerfilFacial.objects.get(id=pk)
+            user_name = f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}"
 
-            # Verificar que el usuario puede eliminar este perfil
-            # (solo el propietario o un admin)
-            usuario = Usuario.objects.get(correo=request.user.email)
-            if profile.codigo_usuario != usuario and not request.user.is_staff:
-                return Response({
-                    'success': False,
-                    'message': 'No tienes permisos para eliminar este perfil'
-                }, status=status.HTTP_403_FORBIDDEN)
+            # Eliminar imagen de Supabase Storage
+            if perfil.imagen_path:
+                delete_success = self.storage_service.delete_file(perfil.imagen_path)
+                if not delete_success:
+                    # Opcional: advertir si la imagen no se pudo borrar, pero continuar
+                    logger.warning(f"No se pudo eliminar la imagen {perfil.imagen_path} de Supabase.")
 
-            # Marcar como inactivo en lugar de eliminar
-            profile.activo = False
-            profile.save()
+            # Eliminar registro de la base de datos
+            perfil.delete()
 
-            # Opcionalmente, eliminar imagen de Supabase
-            try:
-                from supabase import create_client, Client
-                import os
-
-                supabase_url = os.getenv('SUPABASE_URL')
-                supabase_key = os.getenv('SUPABASE_ANON_KEY')
-                supabase: Client = create_client(supabase_url, supabase_key)
-
-                if profile.imagen_path:
-                    supabase.storage.from_('ai-detection-images').remove([profile.imagen_path])
-                    logger.info(f"Imagen eliminada de Supabase: {profile.imagen_path}")
-            except Exception as e:
-                logger.warning(f"Error eliminando imagen de Supabase: {str(e)}")
-
-            logger.info(f"Perfil facial eliminado: {profile.id}")
+            # Recargar perfiles faciales en el servicio (¡Ahora funcionará!)
+            self.facial_service.load_known_faces()
 
             return Response({
                 'success': True,
-                'message': 'Perfil facial eliminado correctamente'
+                'message': f'Perfil facial de {user_name} eliminado exitosamente'
             }, status=status.HTTP_200_OK)
 
         except PerfilFacial.DoesNotExist:
             return Response({
                 'success': False,
-                'message': 'Perfil facial no encontrado'
+                'error': 'Perfil no encontrado'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error eliminando perfil: {str(e)}")
             return Response({
                 'success': False,
-                'message': 'Error interno del servidor'
+                'error': 'Ocurrió un error interno al eliminar el perfil.'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'])
