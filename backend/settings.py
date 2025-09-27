@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 import dj_database_url
+import stripe
 
 # ------------------------------------
 # Paths / .env
@@ -18,6 +19,11 @@ load_dotenv(BASE_DIR / ".env")
 # ------------------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-not-secret")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+# --- CONFIGURACIÓN DE STRIPE ---
+STRIPE_PUBLIC_KEY = os.getenv("STRIPE_PUBLIC_KEY")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+stripe.api_key = STRIPE_SECRET_KEY # <-- Esta línea configura Stripe
 
 def _csv_env(name: str, default: list[str]) -> list[str]:
     raw = os.getenv(name, "")
