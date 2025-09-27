@@ -2067,3 +2067,88 @@ class StripeWebhookView(APIView):
                 return Response(status=500)
 
         return Response(status=200)
+
+
+class HistorialPagosView(APIView):
+    """
+    Devuelve el historial completo de pagos para el usuario autenticado.
+    Soporta exportación a PDF.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_history_data(self, user):
+        """Obtiene y serializa el historial de facturas pagadas."""
+        historial_qs = Factura.objects.filter(
+            codigo_usuario=user,
+            estado='pagado'
+        ).select_related('id_pago').order_by('-fecha', '-hora')
+
+        # Reutilizamos el serializer que ya teníamos para formatear los datos
+        serializer = PagoRealizadoSerializer(historial_qs, many=True)
+        return serializer.data
+
+    def _generate_pdf_history(self, history_data, user):
+        """Genera un archivo PDF con el historial de pagos."""
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        elements.append(Paragraph("Historial de Pagos", styles['h1']))
+        elements.append(Paragraph(f"Residente: {user.nombre} {user.apellido}", styles['h3']))
+        elements.append(Spacer(1, 24))
+
+        table_data = [["Fecha", "Concepto", "Monto (Bs.)", "Tipo de Pago"]]
+        for item in history_data:
+            table_data.append([
+                item['fecha'],
+                item['concepto'],
+                item['monto'],
+                item['tipo_pago']
+            ])
+
+        if not history_data:
+            table_data.append(["No se encontraron pagos registrados.", "", "", ""])
+
+        table = Table(table_data, colWidths=[80, 250, 80, 100])
+        style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('ALIGN', (2, 1), (2, -1), 'RIGHT'),  # Alinear montos a la derecha
+        ])
+        if not history_data:
+            style.add('SPAN', (0, 1), (-1, 1))
+        table.setStyle(style)
+
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="historial_de_pagos.pdf"'
+        return response
+
+    def get(self, request):
+        export_format = request.query_params.get('format')
+
+        try:
+            usuario = Usuario.objects.get(correo=request.user.email)
+            history_data = self._get_history_data(usuario)
+
+            if export_format == 'pdf':
+                return self._generate_pdf_history(history_data, usuario)
+            # Aquí podrías añadir la lógica para 'xlsx' si lo necesitas
+            else:
+                # Por defecto, devuelve los datos en JSON
+                return Response(history_data)
+
+        except Usuario.DoesNotExist:
+            return Response({"error": "Usuario no encontrado."}, status=404)
+        except Exception as e:
+            print(traceback.format_exc())
+            return Response({'error': f'Ocurrió un error: {str(e)}'}, status=500)
