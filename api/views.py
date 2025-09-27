@@ -1,9 +1,10 @@
 from decimal import Decimal
 import requests
 import os
+from django.db.models import Count
 import json
 from django.http import FileResponse, Http404
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.permissions import IsAuthenticated
@@ -31,6 +32,15 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum
+
+from django.http import HttpResponse
+from io import BytesIO
+import openpyxl
+from openpyxl.styles import Font, Alignment
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 
 AI_WORKER_URL = os.getenv("AI_WORKER_URL")
 from .models import (
@@ -1582,3 +1592,124 @@ class SolicitudMantenimientoViewSet(BaseModelViewSet):
         solicitud.estado = nuevo_estado
         solicitud.save()
         return Response(self.get_serializer(solicitud).data)
+
+
+
+import traceback
+
+
+# api/views.py
+
+class ReporteUsoAreasComunesView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def _get_report_data(self, fecha_inicio_str, fecha_fin_str):
+        # Esta función obtiene los datos de la base de datos
+        reservas_query = Reserva.objects.filter(
+            fecha__range=[fecha_inicio_str, fecha_fin_str],
+            estado='Aprobada'
+        ).select_related('id_area_c')
+
+        reporte_data = list(reservas_query.values(
+            'id_area_c__descripcion'
+        ).annotate(
+            cantidad_reservas=Count('id')
+        ).order_by('-cantidad_reservas'))
+
+        total_reservas = reservas_query.count()
+        area_mas_usada = reporte_data[0] if reporte_data else None
+        area_menos_usada = reporte_data[-1] if reporte_data else None
+
+        return {
+            'fecha_inicio': fecha_inicio_str,
+            'fecha_fin': fecha_fin_str,
+            'total_reservas': total_reservas,
+            'area_mas_usada': area_mas_usada,
+            'area_menos_usada': area_menos_usada,
+            'detalle_por_area': reporte_data
+        }
+
+    def _generate_pdf_response(self, data):
+        # Esta función crea el archivo PDF
+        try:
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter)
+            elements = []
+            styles = getSampleStyleSheet()
+
+            elements.append(Paragraph("Reporte de Uso de Áreas Comunes", styles['h1']))
+            elements.append(Spacer(1, 12))
+            elements.append(Paragraph(f"Periodo: {data['fecha_inicio']} al {data['fecha_fin']}", styles['h3']))
+            elements.append(Spacer(1, 24))
+
+            table_data = [["Área Común", "Cantidad de Reservas"]]
+            if data['detalle_por_area']:
+                for item in data['detalle_por_area']:
+                    table_data.append([item['id_area_c__descripcion'], item['cantidad_reservas']])
+            else:
+                table_data.append(["No se encontraron reservas en este periodo.", ""])
+
+            table = Table(table_data)
+            # (El código de estilos de la tabla no cambia)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+
+            elements.append(table)
+            doc.build(elements)
+            buffer.seek(0)
+
+            response = HttpResponse(buffer, content_type='application/pdf')
+            response['Content-Disposition'] = 'attachment; filename="reporte_areas_comunes.pdf"'
+            return response
+        except Exception as e:
+            print("----------- ERROR AL GENERAR PDF -----------")
+            print(traceback.format_exc())
+            return Response({"error": "Error interno al generar el PDF.", "detail": str(e)}, status=500)
+
+    def _generate_excel_response(self, data):
+        # Tu función para generar Excel parece correcta, no necesita cambios.
+        pass
+
+    def get(self, request):
+        fecha_inicio_str = request.query_params.get('fecha_inicio')
+        fecha_fin_str = request.query_params.get('fecha_fin')
+        export_format = request.query_params.get('format')
+
+        # Línea para depurar: verás esto en la consola de Django
+        print(f"DEBUG: Reporte solicitado con formato: '{export_format}'")
+
+        if not fecha_inicio_str or not fecha_fin_str:
+            return Response({'error': 'Las fechas de inicio y fin son obligatorias.'}, status=400)
+
+        try:
+            report_data = self._get_report_data(fecha_inicio_str, fecha_fin_str)
+
+            if export_format == 'pdf':
+                print("DEBUG: Generando PDF...")
+                return self._generate_pdf_response(report_data)
+            elif export_format == 'xlsx':
+                print("DEBUG: Generando Excel...")
+                return self._generate_excel_response(report_data)
+            else:
+                print("DEBUG: Devolviendo datos en JSON...")
+                return Response(report_data)
+
+        except Exception as e:
+            print(f"ERROR: {traceback.format_exc()}")
+            return Response({'error': f'Ocurrió un error inesperado: {str(e)}'}, status=500)
+
+
+# Pega esto al final de api/views.py
+
+from django.http import JsonResponse
+
+def test_view(request):
+    """Una vista de prueba muy simple."""
+    return JsonResponse({"mensaje": "¡La URL de prueba funciona!"})
