@@ -10,7 +10,7 @@ from .views import (
     AsignacionViewSet, EnvioViewSet, RegistroViewSet, BitacoraViewSet,
     LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
     PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView,
-    ReporteUsoAreasComunesView, test_view
+    ReporteUsoAreasComunesView, test_view, MantenimientoPreventivoViewSet
 )
 
 router = DefaultRouter()
@@ -42,6 +42,7 @@ router.register(r'reconocimientos-faciales', ReconocimientoFacialViewSet)
 router.register(r'detecciones-placas', DeteccionPlacaViewSet)
 router.register(r'perfiles-faciales', PerfilFacialViewSet)
 router.register(r'reportes-seguridad', ReporteSeguridadViewSet)
+router.register(r'mantenimientos-preventivos', MantenimientoPreventivoViewSet, basename='mantenimiento-preventivo')
 
 urlpatterns = [
     path('', include(router.urls)),
