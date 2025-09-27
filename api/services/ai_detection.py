@@ -494,6 +494,7 @@ class FacialRecognitionService:
             logger.error(f"Error convirtiendo archivo a imagen: {e}")
             return None
 
+
 class PlateDetectionService:
     """Servicio para detección de placas usando EasyOCR"""
 
@@ -505,7 +506,7 @@ class PlateDetectionService:
 
     def detect_plate(self, image_base64: str, camera_location: str = "Estacionamiento",
                      access_type: str = "entrada") -> Dict:
-        """Detecta placa en la imagen"""
+        """Detecta placa en la imagen (desde base64)"""
         try:
             image = self._base64_to_image(image_base64)
             if image is None:
@@ -578,6 +579,7 @@ class PlateDetectionService:
                                  confidence: float, image_base64: str, camera_location: str,
                                  access_type: str) -> Dict:
         """Crea y guarda el resultado de la detección"""
+        # ... (este método no tiene cambios)
         try:
             upload_result = self.storage_service.upload_base64_image(
                 image_base64,
@@ -634,6 +636,7 @@ class PlateDetectionService:
 
     def _base64_to_image(self, base64_string: str) -> Optional[np.ndarray]:
         """Convierte base64 a imagen numpy"""
+        # ... (este método no tiene cambios)
         try:
             if base64_string.startswith('data:image'):
                 base64_string = base64_string.split(',', 1)[1]
@@ -648,4 +651,111 @@ class PlateDetectionService:
 
         except Exception as e:
             logger.error(f"Error convirtiendo base64 a imagen: {e}")
+            return None
+
+    # --- INICIO DE LOS MÉTODOS MOVIDOS (AHORA DENTRO DE LA CLASE) ---
+
+    def detect_plate_from_file(self, image_file: InMemoryUploadedFile, camera_location: str = "Estacionamiento",
+                               access_type: str = "entrada") -> Dict:
+        """Detecta placa desde un archivo Django"""
+        try:
+            image = self._file_to_image(image_file)
+            if image is None:
+                return self._create_detection_result_from_file(None, False, 0.0, image_file,
+                                                               camera_location, access_type)
+
+            processed_image = self._preprocess_image(image)
+            results = self.reader.readtext(processed_image)
+
+            for (bbox, text, confidence) in results:
+                clean_text = self._clean_plate_text(text)
+
+                if self._is_valid_plate(clean_text) and confidence > self.confidence_threshold:
+                    is_authorized = self._check_authorization(clean_text)
+
+                    return self._create_detection_result_from_file(
+                        clean_text, is_authorized, confidence * 100,
+                        image_file, camera_location, access_type
+                    )
+
+            return self._create_detection_result_from_file(None, False, 0.0, image_file,
+                                                           camera_location, access_type)
+
+        except Exception as e:
+            logger.error(f"Error en detección de placa desde archivo: {e}")
+            return self._create_detection_result_from_file(None, False, 0.0, image_file,
+                                                           camera_location, access_type)
+
+    def _create_detection_result_from_file(self, plate: Optional[str], is_authorized: bool,
+                                           confidence: float, image_file: InMemoryUploadedFile, camera_location: str,
+                                           access_type: str) -> Dict:
+        """Crea y guarda el resultado de la detección desde archivo"""
+        try:
+            upload_result = self.storage_service.upload_django_file(
+                image_file,
+                folder="plates",
+                prefix=f"{access_type}_{camera_location.lower().replace(' ', '_')}"
+            )
+
+            vehiculo = None
+            if plate:
+                vehiculo = Vehiculo.objects.filter(nro_placa__iexact=plate).first()
+
+            deteccion = DeteccionPlaca.objects.create(
+                placa_detectada=plate or "No detectada",
+                vehiculo=vehiculo,
+                imagen_path=upload_result['file_path'] if upload_result else None,
+                imagen_url=upload_result['public_url'] if upload_result else None,
+                confianza=confidence,
+                es_autorizado=is_authorized,
+                ubicacion_camara=camera_location,
+                tipo_acceso=access_type
+            )
+
+            return {
+                'id': deteccion.id,
+                'plate': plate,
+                'is_authorized': is_authorized,
+                'vehicle': {
+                    'id': vehiculo.id if vehiculo else None,
+                    'descripcion': vehiculo.descripcion if vehiculo else None,
+                    'estado': vehiculo.estado if vehiculo else None
+                } if vehiculo else None,
+                'confidence': round(confidence, 2),
+                'timestamp': deteccion.fecha_deteccion.isoformat(),
+                'camera_location': camera_location,
+                'access_type': access_type,
+                'status': 'autorizado' if is_authorized else 'no_autorizado',
+                'image_url': deteccion.imagen_url
+            }
+
+        except Exception as e:
+            logger.error(f"Error creando resultado de detección desde archivo: {e}")
+            return {
+                'id': None,
+                'plate': plate,
+                'is_authorized': False,
+                'vehicle': None,
+                'confidence': 0.0,
+                'timestamp': None,
+                'camera_location': camera_location,
+                'access_type': access_type,
+                'status': 'error',
+                'image_url': None
+            }
+
+    def _file_to_image(self, image_file: InMemoryUploadedFile) -> Optional[np.ndarray]:
+        """Convierte archivo Django a imagen numpy"""
+        try:
+            image_file.seek(0)
+            image_data = image_file.read()
+            image = Image.open(io.BytesIO(image_data))
+
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            return np.array(image)
+
+        except Exception as e:
+            logger.error(f"Error convirtiendo archivo a imagen: {e}")
             return None
