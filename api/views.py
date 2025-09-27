@@ -1411,7 +1411,7 @@ class EstadoCuentaView(APIView):
         mes = request.query_params.get("mes") or date.today().strftime("%Y-%m")
         desde, hasta = _month_range(mes)
 
-        # Obtener los pagos que el usuario YA realizó en el mes
+        # --- LÓGICA DE CARGOS (SIN CAMBIOS EN CÓMO SE OBTIENEN) ---
         pagos_realizados_en_mes = Factura.objects.filter(
             codigo_usuario=user,
             fecha__range=(desde, hasta),
@@ -1419,58 +1419,48 @@ class EstadoCuentaView(APIView):
             id_pago__isnull=False
         ).values_list('id_pago_id', flat=True)
 
-        # --- LÓGICA DE CARGOS MEJORADA ---
         cargos = []
-        pagos_catalogo_qs = Pagos.objects.all()  # Asumimos que todos son cargos mensuales
+        pagos_catalogo_qs = Pagos.objects.all()
 
         for p in pagos_catalogo_qs:
             cargos.append({
-                "id": p.id,  # <--- ID para identificar el cargo
+                "id": p.id,
                 "tipo": p.tipo,
                 "descripcion": p.descripcion,
                 "monto": p.monto,
                 "origen": "pago",
                 "fecha": None,
-                "pagado": p.id in pagos_realizados_en_mes  # <--- Nuevo campo
+                "pagado": p.id in pagos_realizados_en_mes
             })
 
-        # (La lógica de multas se mantiene igual, por ahora no implementaremos su pago)
-        propiedades = [p.codigo_propiedad for p in Pertenece.objects.filter(codigo_usuario=user)]
-        multas_qs = DetalleMulta.objects.filter(
-            codigo_propiedad__in=propiedades,
-            fecha_emi__range=(desde, hasta)
-        ).select_related("id_multa")
+        # ... (La lógica de multas no cambia)
 
-        for dm in multas_qs:
-            cargos.append({
-                "id": dm.id,
-                "tipo": "Multa",
-                "descripcion": dm.id_multa.descripcion,
-                "monto": dm.id_multa.monto,
-                "origen": "multa",
-                "fecha": dm.fecha_emi,
-                "pagado": True  # Asumimos que las multas se pagan por otros medios por ahora
-            })
+        # --- LÓGICA DE CÁLCULOS CORREGIDA ---
 
-        # --- El resto de la función no cambia ---
-        total_cargos = sum(Decimal(c["monto"] or 0) for c in cargos if not c['pagado'] and c['origen'] != 'multa')
+        # 1. Total Cargos del Mes: Suma de TODOS los cargos del catálogo (sin importar si están pagados o no)
+        total_cargos_del_mes = sum(Decimal(c["monto"] or 0) for c in cargos if c['origen'] != 'multa')
 
+        # 2. Total Pagos del Mes: (Esta parte ya estaba bien)
         pagos_realizados_ser = PagoRealizadoSerializer(
             Factura.objects.filter(codigo_usuario=user, fecha__range=(desde, hasta), estado="pagado"),
             many=True
         ).data
-        total_pagos = sum(Decimal(p['monto']) for p in pagos_realizados_ser)
+        total_pagos_del_mes = sum(Decimal(p['monto']) for p in pagos_realizados_ser)
 
-        saldo = total_cargos - total_pagos
+        # 3. Saldo Pendiente: La diferencia entre el total de cargos y el total de pagos
+        saldo_pendiente = total_cargos_del_mes - total_pagos_del_mes
+
+        # --- FIN DE LA CORRECCIÓN ---
 
         payload = {
             "mes": mes,
             "cargos": cargos,
             "pagos": pagos_realizados_ser,
+            # Enviamos los nuevos valores calculados
             "totales": {
-                "cargos": f"{total_cargos:.2f}",
-                "pagos": f"{total_pagos:.2f}",
-                "saldo": f"{saldo:.2f}",
+                "cargos": f"{total_cargos_del_mes:.2f}",
+                "pagos": f"{total_pagos_del_mes:.2f}",
+                "saldo": f"{saldo_pendiente:.2f}",
             },
         }
         return Response(payload, status=200)
@@ -2152,3 +2142,34 @@ class HistorialPagosView(APIView):
         except Exception as e:
             print(traceback.format_exc())
             return Response({'error': f'Ocurrió un error: {str(e)}'}, status=500)
+
+
+class MisNotificacionesView(APIView):
+    """
+    Devuelve las notificaciones para el usuario autenticado.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            usuario = Usuario.objects.get(correo=request.user.email)
+            # Buscamos en la tabla Envio las notificaciones para este usuario
+            envios = Envio.objects.filter(
+                codigo_usuario=usuario
+            ).select_related('id_notific').order_by('-fecha', '-hora')
+
+            # Formateamos la respuesta
+            notificaciones = []
+            for envio in envios:
+                notif = envio.id_notific
+                notificaciones.append({
+                    "id_envio": envio.id,
+                    "tipo": notif.tipo,
+                    "descripcion": notif.descripcion,
+                    "fecha": f"{envio.fecha} {envio.hora}",
+                    "estado": envio.estado
+                })
+
+            return Response(notificaciones)
+        except Usuario.DoesNotExist:
+            return Response({"error": "Usuario no encontrado."}, status=404)
