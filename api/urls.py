@@ -11,7 +11,7 @@ from .views import (
     LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
     PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView,
     ReporteUsoAreasComunesView, test_view, MantenimientoPreventivoViewSet, ReporteBitacoraView, PagarCuotaView,
-    StripeWebhookView, HistorialPagosView
+    StripeWebhookView, HistorialPagosView, MisNotificacionesView
 )
 
 router = DefaultRouter()
@@ -60,4 +60,5 @@ urlpatterns = [
     path("pagar-cuota/", PagarCuotaView.as_view(), name="pagar-cuota"),
     path("stripe-webhook/", StripeWebhookView.as_view(), name="stripe-webhook"),
     path("historial-pagos/", HistorialPagosView.as_view(), name="historial-pagos"),
+    path("mis-notificaciones/", MisNotificacionesView.as_view(), name="mis-notificaciones"),
 ]
