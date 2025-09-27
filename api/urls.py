@@ -10,7 +10,7 @@ from .views import (
     AsignacionViewSet, EnvioViewSet, RegistroViewSet, BitacoraViewSet,
     LoginView, RegisterView, LogoutView, AIDetectionViewSet, ReconocimientoFacialViewSet, DeteccionPlacaViewSet,
     PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView,
-    ReporteUsoAreasComunesView, test_view, MantenimientoPreventivoViewSet
+    ReporteUsoAreasComunesView, test_view, MantenimientoPreventivoViewSet, ReporteBitacoraView
 )
 
 router = DefaultRouter()
@@ -54,5 +54,6 @@ urlpatterns = [
     path('comprobante/<int:pk>/', ComprobantePDFView.as_view(), name='comprobante-pdf'),
 
     # Tu nueva ruta para el reporte de áreas comunes
-    path("reporte/", ReporteUsoAreasComunesView.as_view(), name="reporte-uso-areas"),
+    path("reporte/areas-comunes/", ReporteUsoAreasComunesView.as_view(), name="reporte-uso-areas"),
+    path("reporte/bitacora/", ReporteBitacoraView.as_view(), name="reporte-bitacora"),
 ]
