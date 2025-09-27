@@ -34,7 +34,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum
-
+from .models import Bitacora, Usuario
 from django.http import HttpResponse
 from io import BytesIO
 import openpyxl
@@ -1836,3 +1836,149 @@ class StripeWebhookView(APIView):
                 return Response({'error': str(e)}, status=500)
 
         return Response(status=200)
+=======
+class ReporteBitacoraView(APIView):
+    """
+    Genera un reporte de la bitácora del sistema entre un rango de fechas.
+    Soporta formatos JSON, PDF y Excel.
+    """
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def _get_report_data(self, fecha_inicio, fecha_fin):
+        """Obtiene y formatea los datos de la bitácora desde la base de datos."""
+        query = Bitacora.objects.filter(
+            fecha__range=[fecha_inicio, fecha_fin]
+        ).select_related('codigo_usuario').order_by('-fecha', '-hora')
+
+        # Serialización manual para dar el formato que queremos
+        detalle = []
+        for entrada in query:
+            detalle.append({
+                "fecha": entrada.fecha.strftime('%Y-%m-%d'),
+                "hora": entrada.hora.strftime('%H:%M:%S'),
+                "usuario": f"{entrada.codigo_usuario.nombre} {entrada.codigo_usuario.apellido}" if entrada.codigo_usuario else "Sistema",
+                "accion": entrada.accion,
+                "ip": entrada.ip,
+            })
+
+        # Estadísticas adicionales
+        total_entradas = query.count()
+        usuarios_activos = query.values('codigo_usuario').distinct().count()
+
+        return {
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "total_entradas": total_entradas,
+            "total_usuarios_activos": usuarios_activos,
+            "detalle": detalle
+        }
+
+    def _generate_pdf_response(self, data):
+        """Genera la respuesta en formato PDF."""
+        buffer = BytesIO()
+        # Usamos landscape (horizontal) porque la tabla es ancha
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(letter))
+        styles = getSampleStyleSheet()
+        elements = []
+
+        elements.append(Paragraph("Reporte de Bitácora del Sistema", styles['h1']))
+        elements.append(Paragraph(f"Periodo: {data['fecha_inicio']} a {data['fecha_fin']}", styles['h3']))
+        elements.append(Spacer(1, 24))
+
+        # Encabezados de la tabla
+        table_data = [["Fecha", "Hora", "Usuario", "Acción", "Dirección IP"]]
+        # Filas de datos
+        for item in data['detalle']:
+            table_data.append([item['fecha'], item['hora'], item['usuario'], item['accion'], item['ip']])
+
+        if not data['detalle']:
+            table_data.append(["No hay entradas en el periodo seleccionado.", "", "", "", ""])
+
+        table = Table(table_data, colWidths=[70, 60, 120, 350, 100])
+        style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ])
+        if not data['detalle']:
+            style.add('SPAN', (0, 1), (-1, 1))  # Unir celdas si no hay datos
+        table.setStyle(style)
+
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="reporte_bitacora.pdf"'
+        return response
+
+    def _generate_excel_response(self, data):
+        """Genera la respuesta en formato Excel."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Reporte Bitácora"
+
+        # Títulos
+        ws['A1'] = "Reporte de Bitácora del Sistema"
+        ws.merge_cells('A1:E1')
+        ws['A1'].font = Font(bold=True, size=16)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        ws['A2'] = f"Periodo: {data['fecha_inicio']} a {data['fecha_fin']}"
+        ws.merge_cells('A2:E2')
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        # Encabezados de tabla
+        headers = ["Fecha", "Hora", "Usuario", "Acción", "Dirección IP"]
+        ws.append(headers)
+        for cell in ws[4]:
+            cell.font = Font(bold=True)
+
+        # Datos
+        for item in data['detalle']:
+            ws.append([item['fecha'], item['hora'], item['usuario'], item['accion'], item['ip']])
+
+        # Ajustar ancho de columnas
+        ws.column_dimensions['A'].width = 12
+        ws.column_dimensions['B'].width = 10
+        ws.column_dimensions['C'].width = 25
+        ws.column_dimensions['D'].width = 60
+        ws.column_dimensions['E'].width = 15
+
+        buffer = BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        response = HttpResponse(buffer,
+                                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename="reporte_bitacora.xlsx"'
+        return response
+
+    def get(self, request):
+        fecha_inicio = request.query_params.get('fecha_inicio')
+        fecha_fin = request.query_params.get('fecha_fin')
+        export_format = request.query_params.get('format')
+
+        if not fecha_inicio or not fecha_fin:
+            return Response({'error': 'Los parámetros `fecha_inicio` y `fecha_fin` son obligatorios.'}, status=400)
+
+        try:
+            report_data = self._get_report_data(fecha_inicio, fecha_fin)
+
+            if export_format == 'pdf':
+                return self._generate_pdf_response(report_data)
+            elif export_format == 'xlsx':
+                return self._generate_excel_response(report_data)
+            else:
+                return Response(report_data)
+
+        except Exception as e:
+            print(traceback.format_exc())
+            return Response({'error': f'Ocurrió un error al generar el reporte: {str(e)}'}, status=500)
+
