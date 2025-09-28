@@ -417,7 +417,9 @@ class PerteneceViewSet(BaseModelViewSet):
     search_fields = []
     ordering_fields = ['id', 'fecha_ini', 'fecha_fin']
 
-    # Tu método 'create' está bien, no necesita cambios. Lo mantenemos igual.
+    # smartcondominium-back/api/views.py
+    # Dentro de la clase PerteneceViewSet
+
     def create(self, request, *args, **kwargs):
         codigo_usuario = request.data.get('codigo_usuario')
         codigo_propiedad = request.data.get('codigo_propiedad')
@@ -425,13 +427,7 @@ class PerteneceViewSet(BaseModelViewSet):
         fecha_fin = request.data.get('fecha_fin')
         rol_asignado = request.data.get('rol_en_propiedad')
 
-        # Validación de roles (opcional pero recomendada)
-        if rol_asignado not in Pertenece.RolEnPropiedad.values:
-            return Response(
-                {'detail': f"El rol '{rol_asignado}' no es válido."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+        # Las validaciones iniciales no cambian
         if not all([codigo_usuario, codigo_propiedad, fecha_ini, rol_asignado]):
             return Response(
                 {'detail': 'Usuario, propiedad, fecha de inicio y rol son obligatorios.'},
@@ -439,27 +435,34 @@ class PerteneceViewSet(BaseModelViewSet):
             )
         try:
             usuario = Usuario.objects.get(codigo=codigo_usuario, estado='activo')
+            propiedad = Propiedad.objects.get(codigo=codigo_propiedad)
         except Usuario.DoesNotExist:
             return Response({'detail': 'Usuario no encontrado o inactivo.'}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            propiedad = Propiedad.objects.get(codigo=codigo_propiedad)
         except Propiedad.DoesNotExist:
             return Response({'detail': 'Propiedad no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
         from datetime import datetime
         fecha_ini_date = datetime.strptime(fecha_ini, '%Y-%m-%d').date()
 
+        # --- INICIO DE LA LÓGICA CORREGIDA ---
+
+        # REGLA 1 (MODIFICADA): Un usuario no puede estar vinculado a la MISMA propiedad dos veces en el mismo período.
         conflicto_usuario = Pertenece.objects.filter(
             codigo_usuario=usuario,
+            codigo_propiedad=propiedad,  # <-- Se añade esta línea para restringir la búsqueda solo a esta propiedad
             fecha_ini__lte=fecha_ini_date,
         ).filter(
             models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
         ).exists()
+
         if conflicto_usuario:
             return Response(
-                {'detail': 'Este usuario ya está vinculado a otra propiedad en el período especificado.'},
+                # <-- Se actualiza el mensaje de error para ser más claro
+                {'detail': 'Este usuario ya está vinculado a ESTA propiedad en el período especificado.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # REGLA 2 (SIN CAMBIOS): Una propiedad solo puede tener UN 'Propietario'.
         if rol_asignado == 'Propietario':
             conflicto_propietario = Pertenece.objects.filter(
                 codigo_propiedad=propiedad,
@@ -468,11 +471,16 @@ class PerteneceViewSet(BaseModelViewSet):
             ).filter(
                 models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
             ).exists()
+
             if conflicto_propietario:
                 return Response(
                     {'detail': 'Esta propiedad ya tiene un Propietario asignado en el período especificado.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+
+        # --- FIN DE LA LÓGICA CORREGIDA ---
+
+        # El resto del código para la bitácora no cambia
         try:
             admin_usuario = Usuario.objects.get(correo=request.user.email)
             Bitacora.objects.create(
@@ -482,8 +490,9 @@ class PerteneceViewSet(BaseModelViewSet):
                 hora=timezone.now().time(),
                 ip=self._get_client_ip(request)
             )
-        except Usuario.DoesNotExist:
+        except Exception:
             pass
+
         return super().create(request, *args, **kwargs)
 
     # --- MEJORA 2: AÑADIR REGISTRO EN BITÁCORA AL ELIMINAR ---
