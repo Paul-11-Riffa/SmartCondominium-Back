@@ -4,6 +4,7 @@ import os
 import stripe
 from django.db.models import Count
 import json
+from django.conf import settings
 from django.http import FileResponse, Http404
 from rest_framework import viewsets, permissions, serializers
 from django_filters.rest_framework import DjangoFilterBackend
