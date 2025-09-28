@@ -525,6 +525,14 @@ class SolicitudMantenimiento(models.Model):
     codigo_usuario = models.ForeignKey(
         Usuario, on_delete=models.CASCADE, db_column="CodigoUsuario", related_name="solicitudes_mantenimiento"
     )
+    id_pago = models.ForeignKey(
+        Pagos,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="IdPago",
+        related_name="solicitudes"
+    )
     codigo_propiedad = models.ForeignKey(
         Propiedad, on_delete=models.CASCADE, db_column="CodigoPropiedad", related_name="solicitudes_mantenimiento"
     )
