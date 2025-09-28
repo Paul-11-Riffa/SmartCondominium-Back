@@ -218,6 +218,7 @@ class PropiedadViewSet(BaseModelViewSet):
         return ip
     # --- FIN DE LA CORRECCIÓN DE INDENTACIÓN ---
 
+
 class BitacoraMixin:
     def _bitacora(self, request, accion: str):
         try:
@@ -266,7 +267,7 @@ class MultaViewSet(BitacoraMixin, viewsets.ModelViewSet):
 
 
 class PagoViewSet(BitacoraMixin, viewsets.ModelViewSet):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrReadOnly]
     queryset = Pagos.objects.all().order_by("tipo", "descripcion")
     serializer_class = PagoSerializer
     search_fields = ["tipo", "descripcion"]
@@ -1420,7 +1421,9 @@ class EstadoCuentaView(APIView):
         ).values_list('id_pago_id', flat=True)
 
         cargos = []
-        pagos_catalogo_qs = Pagos.objects.all()
+        pagos_catalogo_qs = Pagos.objects.filter(
+            tipo__in=['Mantenimiento', 'Extraordinaria']
+        )
 
         for p in pagos_catalogo_qs:
             cargos.append({
@@ -1552,16 +1555,28 @@ class SolicitudMantenimientoViewSet(BaseModelViewSet):
 
     @action(detail=True, methods=['patch'], permission_classes=[IsAdmin])
     def update_status(self, request, pk=None):
-        """
-        Endpoint solo para admins para cambiar el estado de una solicitud.
-        """
         solicitud = self.get_object()
         nuevo_estado = request.data.get('estado')
+
         if nuevo_estado not in ['En Progreso', 'Completada', 'Cancelada']:
             return Response({'error': 'Estado no válido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         solicitud.estado = nuevo_estado
         solicitud.save()
+
+        # --- LÓGICA DE COBRO AUTOMÁTICO ---
+        if nuevo_estado == 'Completada' and solicitud.id_pago:
+            # Si el servicio se completó y tiene un costo asociado, creamos la factura.
+            Factura.objects.create(
+                codigo_usuario=solicitud.codigo_usuario,
+                id_pago=solicitud.id_pago,
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                tipo_pago='Servicio Solicitado',
+                estado='pendiente'  # El usuario deberá pagarlo desde su estado de cuenta
+            )
+        # --- FIN DE LA LÓGICA DE COBRO ---
+
         return Response(self.get_serializer(solicitud).data)
 
 
