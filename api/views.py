@@ -1769,6 +1769,7 @@ class PagarCuotaView(APIView):
                 )
 
                 # 2. Creamos la sesión de Checkout de Stripe
+                FRONTEND_URL = settings.FRONTEND_URL
                 session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
                     line_items=[{
@@ -1783,8 +1784,8 @@ class PagarCuotaView(APIView):
                     }],
                     mode='payment',
                     # URLs a las que Stripe redirigirá al usuario
-                    success_url='http://localhost:5173/pago-exitoso?session_id={CHECKOUT_SESSION_ID}',
-                    cancel_url='http://localhost:5173/estado-cuenta',
+                    success_url=f'{FRONTEND_URL}/pago-exitoso?session_id={{CHECKOUT_SESSION_ID}}',
+                    cancel_url=f'{FRONTEND_URL}/estado-cuenta',
                     # Guardamos el ID de nuestra factura para saber qué actualizar después
                     client_reference_id=factura_pendiente.id
                 )
