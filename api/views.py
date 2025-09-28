@@ -176,11 +176,15 @@ class PropiedadViewSet(BaseModelViewSet):
     def _serialize_propiedades_with_residents(self, propiedades):
         """Serializa propiedades incluyendo una lista de residentes actuales y sus roles."""
         result = []
-        today = date.today()
+        # --- ESTE ES EL CAMBIO CLAVE ---
+        # Usamos timezone.now().date() en lugar de date.today()
+        # para asegurarnos de usar la zona horaria de settings.py
+        today = timezone.now().date()
 
         for propiedad in propiedades:
             prop_data = PropiedadSerializer(propiedad).data
 
+            # El resto de la lógica no necesita cambios
             vinculaciones_activas = [
                 p for p in propiedad.pertenentes.all()
                 if p.fecha_ini <= today and (p.fecha_fin is None or p.fecha_fin >= today)
