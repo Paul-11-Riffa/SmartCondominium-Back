@@ -431,7 +431,7 @@ class PerteneceViewSet(BaseModelViewSet):
         fecha_fin = request.data.get('fecha_fin')
         rol_asignado = request.data.get('rol_en_propiedad')
 
-        # Las validaciones iniciales no cambian
+        # Validaciones iniciales no cambian
         if not all([codigo_usuario, codigo_propiedad, fecha_ini, rol_asignado]):
             return Response(
                 {'detail': 'Usuario, propiedad, fecha de inicio y rol son obligatorios.'},
@@ -484,7 +484,7 @@ class PerteneceViewSet(BaseModelViewSet):
 
         # --- FIN DE LA LÓGICA CORREGIDA ---
 
-        # El resto del código para la bitácora no cambia
+        # El código de la bitácora no cambia
         try:
             admin_usuario = Usuario.objects.get(correo=request.user.email)
             Bitacora.objects.create(
