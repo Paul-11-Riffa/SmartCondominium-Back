@@ -1759,7 +1759,7 @@ class PagarCuotaView(APIView):
                     payment_method_types=['card'],
                     line_items=[{
                         'price_data': {
-                            'currency': 'usd',
+                            'currency': 'bob',
                             'product_data': {
                                 'name': f"{pago_info.descripcion} (Mes: {mes})",
                             },
@@ -1986,93 +1986,6 @@ class ReporteBitacoraView(APIView):
         except Exception as e:
             print(traceback.format_exc())
             return Response({'error': f'Ocurrió un error al generar el reporte: {str(e)}'}, status=500)
-
-
-class PagarCuotaView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        id_pago = request.data.get('id_pago')
-        mes = request.data.get('mes')
-
-        if not id_pago or not mes:
-            return Response({'error': 'Se requiere el id del pago y el mes.'}, status=400)
-
-        try:
-            with transaction.atomic():
-                usuario = Usuario.objects.get(correo=request.user.email)
-                pago_info = Pagos.objects.get(id=id_pago)
-
-                fecha_inicio_mes, fecha_fin_mes = _month_range(mes)
-                if Factura.objects.filter(codigo_usuario=usuario, id_pago=pago_info,
-                                          fecha__range=[fecha_inicio_mes, fecha_fin_mes], estado='pagado').exists():
-                    return Response({'error': 'Esta cuota ya ha sido pagada para el mes seleccionado.'}, status=400)
-
-                factura_pendiente = Factura.objects.create(
-                    codigo_usuario=usuario, id_pago=pago_info,
-                    fecha=timezone.now().date(), hora=timezone.now().time(),
-                    tipo_pago='Stripe (Pendiente)', estado='pendiente'
-                )
-
-                session = stripe.checkout.Session.create(
-                    payment_method_types=['card'],
-                    line_items=[{
-                        'price_data': {
-                            'currency': 'usd',  # Usamos USD para las pruebas
-                            'product_data': {'name': f"{pago_info.descripcion} (Mes: {mes})"},
-                            'unit_amount': int(pago_info.monto * 100),
-                        }, 'quantity': 1,
-                    }],
-                    mode='payment',
-                    success_url='http://localhost:5173/pago-exitoso?session_id={CHECKOUT_SESSION_ID}',
-                    cancel_url='http://localhost:5173/estado-cuenta',
-                    client_reference_id=factura_pendiente.id
-                )
-                return Response({'sessionId': session.id})
-        except Exception as e:
-            return Response({'error': str(e)}, status=500)
-
-
-# --- AÑADE ESTA NUEVA VISTA AL FINAL DEL ARCHIVO ---
-class StripeWebhookView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        payload = request.body
-        sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
-        webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
-
-        if not webhook_secret:
-            return Response({'error': 'Webhook secret no configurado.'}, status=500)
-        try:
-            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        except (ValueError, stripe.error.SignatureVerificationError):
-            return Response(status=400)
-
-        if event['type'] == 'checkout.session.completed':
-            session = event['data']['object']
-            factura_id = session.get('client_reference_id')
-            try:
-                with transaction.atomic():
-                    factura = Factura.objects.get(id=factura_id, estado='pendiente')
-                    factura.estado = 'pagado'
-                    factura.tipo_pago = 'Stripe (Real)'
-                    factura.save()
-
-                    Finanzas.objects.create(
-                        tipo='Ingreso',
-                        descripcion=f"Pago (Stripe) de '{factura.id_pago.descripcion}' por {factura.codigo_usuario.nombre}",
-                        monto=factura.id_pago.monto,
-                        fecha=timezone.now().date(),
-                        origen='Pago Residente',
-                        id_factura=factura
-                    )
-            except Factura.DoesNotExist:
-                return Response(status=404)
-            except Exception:
-                return Response(status=500)
-
-        return Response(status=200)
 
 
 class HistorialPagosView(APIView):
