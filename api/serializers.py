@@ -109,11 +109,19 @@ class VehiculoSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+# smartcondominium-back/api/serializers.py
+
 class PerteneceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pertenece
-        fields = "__all__"
-
+        fields = (
+            "id",
+            "codigo_usuario",
+            "codigo_propiedad",
+            "fecha_ini",
+            "fecha_fin",
+            "rol_en_propiedad"  # <-- AÑADE ESTA LÍNEA
+        )
 
 class ListaVisitantesSerializer(serializers.ModelSerializer):
     class Meta:

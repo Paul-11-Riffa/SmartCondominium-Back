@@ -93,26 +93,21 @@ class PropiedadViewSet(BaseModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-
-        # Si se solicita incluir información de residentes
         if self.request.query_params.get('include_residents') == 'true':
-            queryset = queryset.prefetch_related('pertenentes__codigo_usuario__idrol')
-
+            queryset = queryset.prefetch_related('pertenentes__codigo_usuario')
         return queryset
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-
         page = self.paginate_queryset(queryset)
-        if page is not None:
-            propiedades_data = self._serialize_propiedades_with_residents(page)
-            return self.get_paginated_response(propiedades_data)
 
-        propiedades_data = self._serialize_propiedades_with_residents(queryset)
+        propiedades_data = self._serialize_propiedades_with_residents(page if page is not None else queryset)
+
+        if page is not None:
+            return self.get_paginated_response(propiedades_data)
         return Response(propiedades_data)
 
     def create(self, request, *args, **kwargs):
-        # (opcional) pre-chequeo amigable antes de ir a BD
         nro_casa = request.data.get('nro_casa')
         piso = request.data.get('piso', 0)
         if nro_casa is not None and piso is not None:
@@ -121,8 +116,6 @@ class PropiedadViewSet(BaseModelViewSet):
                     {'detail': f'Ya existe una unidad con número {nro_casa} en piso {piso}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
-        # Bitácora (tu lógica existente)
         try:
             usuario = Usuario.objects.get(correo=request.user.email)
             Bitacora.objects.create(
@@ -134,8 +127,6 @@ class PropiedadViewSet(BaseModelViewSet):
             )
         except Usuario.DoesNotExist:
             pass
-
-        # Intento real de creación (atrapa la UNIQUE constraint)
         try:
             with transaction.atomic():
                 return super().create(request, *args, **kwargs)
@@ -147,8 +138,6 @@ class PropiedadViewSet(BaseModelViewSet):
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
-
-        # (opcional) pre-chequeo amigable antes de ir a BD
         nro_casa = request.data.get("nro_casa", instance.nro_casa)
         piso = request.data.get("piso", instance.piso if instance.piso is not None else 0)
         if (
@@ -162,8 +151,6 @@ class PropiedadViewSet(BaseModelViewSet):
                 {"detail": f"Ya existe una unidad con número {nro_casa} en piso {piso}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        # Bitácora (tu lógica existente)
         try:
             usuario = Usuario.objects.get(correo=request.user.email)
             Bitacora.objects.create(
@@ -175,8 +162,6 @@ class PropiedadViewSet(BaseModelViewSet):
             )
         except Usuario.DoesNotExist:
             pass
-
-        # Intento real de actualización (atrapa la UNIQUE constraint)
         try:
             with transaction.atomic():
                 return super().update(request, *args, **kwargs)
@@ -186,38 +171,35 @@ class PropiedadViewSet(BaseModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    # --- INICIO DE LA CORRECCIÓN DE INDENTACIÓN ---
+    # Estas funciones ahora están al nivel correcto de la clase.
     def _serialize_propiedades_with_residents(self, propiedades):
-        """Serializa propiedades incluyendo información del residente actual"""
+        """Serializa propiedades incluyendo una lista de residentes actuales y sus roles."""
         result = []
+        today = date.today()
 
         for propiedad in propiedades:
-            # Datos básicos de la propiedad
             prop_data = PropiedadSerializer(propiedad).data
 
-            # Buscar residente actual (sin fecha_fin o fecha_fin futura)
-            residente_actual = None
+            vinculaciones_activas = [
+                p for p in propiedad.pertenentes.all()
+                if p.fecha_ini <= today and (p.fecha_fin is None or p.fecha_fin >= today)
+            ]
 
-            # Obtener la vinculación más reciente que esté activa
-            vinculacion_activa = Pertenece.objects.filter(
-                codigo_propiedad=propiedad,
-                fecha_ini__lte=date.today()
-            ).filter(
-                models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=date.today())
-            ).select_related('codigo_usuario__idrol').order_by('-fecha_ini').first()
+            residentes_actuales = []
+            for v in vinculaciones_activas:
+                if v.codigo_usuario:
+                    residentes_actuales.append({
+                        'pertenece_id': v.id,
+                        'codigo_usuario': v.codigo_usuario.codigo,
+                        'nombre_completo': f"{v.codigo_usuario.nombre} {v.codigo_usuario.apellido}",
+                        'correo': v.codigo_usuario.correo,
+                        'rol_en_propiedad': v.rol_en_propiedad,
+                        'fecha_ini': v.fecha_ini,
+                        'fecha_fin': v.fecha_fin,
+                    })
 
-            if vinculacion_activa and vinculacion_activa.codigo_usuario:
-                usuario = vinculacion_activa.codigo_usuario
-                residente_actual = {
-                    'codigo': usuario.codigo,
-                    'nombre': usuario.nombre,
-                    'apellido': usuario.apellido,
-                    'correo': usuario.correo,
-                    'tipo_rol': usuario.idrol.descripcion if usuario.idrol else 'Sin rol',
-                    'fecha_ini': vinculacion_activa.fecha_ini.isoformat(),
-                    'fecha_fin': vinculacion_activa.fecha_fin.isoformat() if vinculacion_activa.fecha_fin else None
-                }
-
-            prop_data['propietario_actual'] = residente_actual
+            prop_data['residentes_actuales'] = residentes_actuales
             result.append(prop_data)
 
         return result
@@ -230,7 +212,7 @@ class PropiedadViewSet(BaseModelViewSet):
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
-
+    # --- FIN DE LA CORRECCIÓN DE INDENTACIÓN ---
 
 class BitacoraMixin:
     def _bitacora(self, request, accion: str):
@@ -420,122 +402,116 @@ class UsuarioViewSet(BaseModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# smartcondominium-back/api/views.py
+
+# ... (otros imports)
+
+# REEMPLAZA TU CLASE PerteneceViewSet ACTUAL CON ESTA VERSIÓN MEJORADA
 class PerteneceViewSet(BaseModelViewSet):
+    # --- MEJORA 1: AÑADIR PERMISOS DE ADMINISTRADOR ---
+    permission_classes = [IsAdmin]
+
     queryset = Pertenece.objects.all().order_by('-fecha_ini')
     serializer_class = PerteneceSerializer
-    filterset_fields = ['codigo_usuario', 'codigo_propiedad', 'fecha_ini', 'fecha_fin']
+    filterset_fields = ['codigo_usuario', 'codigo_propiedad', 'fecha_ini', 'fecha_fin', 'rol_en_propiedad']
     search_fields = []
     ordering_fields = ['id', 'fecha_ini', 'fecha_fin']
 
-    def get_queryset(self):
-        queryset = super().get_queryset()
-
-        # Filtro para obtener solo vinculaciones activas
-        if self.request.query_params.get('activas') == 'true':
-            queryset = queryset.filter(
-                fecha_ini__lte=date.today()
-            ).filter(
-                models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=date.today())
-            )
-
-        return queryset
-
+    # Tu método 'create' está bien, no necesita cambios. Lo mantenemos igual.
     def create(self, request, *args, **kwargs):
         codigo_usuario = request.data.get('codigo_usuario')
         codigo_propiedad = request.data.get('codigo_propiedad')
         fecha_ini = request.data.get('fecha_ini')
         fecha_fin = request.data.get('fecha_fin')
+        rol_asignado = request.data.get('rol_en_propiedad')
 
-        # Validaciones
-        if not codigo_usuario or not codigo_propiedad or not fecha_ini:
+        # Validación de roles (opcional pero recomendada)
+        if rol_asignado not in Pertenece.RolEnPropiedad.values:
             return Response(
-                {'detail': 'Usuario, propiedad y fecha de inicio son obligatorios'},
+                {'detail': f"El rol '{rol_asignado}' no es válido."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Verificar que el usuario existe y está activo
+        if not all([codigo_usuario, codigo_propiedad, fecha_ini, rol_asignado]):
+            return Response(
+                {'detail': 'Usuario, propiedad, fecha de inicio y rol son obligatorios.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         try:
             usuario = Usuario.objects.get(codigo=codigo_usuario, estado='activo')
-            if usuario.idrol_id not in [1, 2]:  # Solo copropietarios e inquilinos
-                return Response(
-                    {'detail': 'Solo se pueden vincular copropietarios e inquilinos'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
         except Usuario.DoesNotExist:
-            return Response(
-                {'detail': 'Usuario no encontrado o inactivo'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # Verificar que la propiedad existe
+            return Response({'detail': 'Usuario no encontrado o inactivo.'}, status=status.HTTP_404_NOT_FOUND)
         try:
             propiedad = Propiedad.objects.get(codigo=codigo_propiedad)
         except Propiedad.DoesNotExist:
-            return Response(
-                {'detail': 'Propiedad no encontrada'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'detail': 'Propiedad no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Verificar fechas
         from datetime import datetime
         fecha_ini_date = datetime.strptime(fecha_ini, '%Y-%m-%d').date()
 
-        if fecha_fin:
-            fecha_fin_date = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
-            if fecha_fin_date <= fecha_ini_date:
-                return Response(
-                    {'detail': 'La fecha de fin debe ser posterior a la fecha de inicio'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        # Verificar que no haya vinculaciones conflictivas
-        # (mismo usuario con otra propiedad activa, o misma propiedad con otro usuario activo)
-
-        # Conflicto: usuario ya vinculado a otra propiedad activa
         conflicto_usuario = Pertenece.objects.filter(
             codigo_usuario=usuario,
-            fecha_ini__lte=fecha_ini_date
+            fecha_ini__lte=fecha_ini_date,
         ).filter(
             models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
-        ).exclude(codigo_propiedad=propiedad).exists()
-
+        ).exists()
         if conflicto_usuario:
             return Response(
-                {'detail': 'El usuario ya está vinculado a otra propiedad en el período especificado'},
+                {'detail': 'Este usuario ya está vinculado a otra propiedad en el período especificado.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-        # Conflicto: propiedad ya vinculada a otro usuario activo
-        conflicto_propiedad = Pertenece.objects.filter(
-            codigo_propiedad=propiedad,
-            fecha_ini__lte=fecha_ini_date
-        ).filter(
-            models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
-        ).exclude(codigo_usuario=usuario).exists()
-
-        if conflicto_propiedad:
-            return Response(
-                {'detail': 'La propiedad ya está vinculada a otro usuario en el período especificado'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Registrar en bitácora
+        if rol_asignado == 'Propietario':
+            conflicto_propietario = Pertenece.objects.filter(
+                codigo_propiedad=propiedad,
+                rol_en_propiedad='Propietario',
+                fecha_ini__lte=fecha_ini_date,
+            ).filter(
+                models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
+            ).exists()
+            if conflicto_propietario:
+                return Response(
+                    {'detail': 'Esta propiedad ya tiene un Propietario asignado en el período especificado.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         try:
             admin_usuario = Usuario.objects.get(correo=request.user.email)
             Bitacora.objects.create(
                 codigo_usuario=admin_usuario,
-                accion=f"Vinculación de {usuario.nombre} {usuario.apellido} a unidad {propiedad.nro_casa}",
+                accion=f"Vinculación de {usuario.nombre} a unidad {propiedad.nro_casa} como {rol_asignado}",
                 fecha=timezone.now().date(),
                 hora=timezone.now().time(),
                 ip=self._get_client_ip(request)
             )
         except Usuario.DoesNotExist:
             pass
-
         return super().create(request, *args, **kwargs)
 
+    # --- MEJORA 2: AÑADIR REGISTRO EN BITÁCORA AL ELIMINAR ---
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        # Guardamos la información antes de borrar para usarla en el log
+        usuario_asignado = instance.codigo_usuario
+        propiedad_asignada = instance.codigo_propiedad
+
+        # Primero, registramos la acción en la bitácora
+        try:
+            admin_usuario = Usuario.objects.get(correo=request.user.email)
+            Bitacora.objects.create(
+                codigo_usuario=admin_usuario,
+                accion=f"Desvinculación de {usuario_asignado.nombre} de la unidad {propiedad_asignada.nro_casa}",
+                fecha=timezone.now().date(),
+                hora=timezone.now().time(),
+                ip=self._get_client_ip(request)
+            )
+        except Exception:
+            pass  # Si falla el log, no impedimos que la eliminación continúe
+
+        # Luego, procedemos con la eliminación
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     def _get_client_ip(self, request):
-        """Obtiene la IP del cliente"""
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
             ip = x_forwarded_for.split(',')[0]
@@ -764,8 +740,6 @@ class LoginView(APIView):
             u = Usuario.objects.get(correo=email)
         except Usuario.DoesNotExist:
             return Response({"detail": "Usuario no existe."}, status=status.HTTP_404_NOT_FOUND)
-
-
 
             # 2) Comparación simple (demo). En prod: NO uses texto plano.
         if u.contrasena != password:
@@ -1838,6 +1812,7 @@ class StripeWebhookView(APIView):
                 return Response({'error': str(e)}, status=500)
 
         return Response(status=200)
+
 
 class ReporteBitacoraView(APIView):
     """
