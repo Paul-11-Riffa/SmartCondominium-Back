@@ -1221,42 +1221,43 @@ if FacialRecognitionService and PlateDetectionService:
 
         # Y la función delete_profile:
 
-        @action(detail=True, methods=['delete'])
-        def delete_profile(self, request, pk=None):
-            """Elimina un perfil facial"""
-            try:
-                perfil = PerfilFacial.objects.get(id=pk)
-                user_name = f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}"
+            # En api/views.py, dentro de la clase AIDetectionViewSet
 
-                # Eliminar imagen de Supabase Storage
-                if perfil.imagen_path:
-                    delete_success = self.storage_service.delete_file(perfil.imagen_path)
-                    if not delete_success:
-                        # Opcional: advertir si la imagen no se pudo borrar, pero continuar
-                        logger.warning(f"No se pudo eliminar la imagen {perfil.imagen_path} de Supabase.")
+            @action(detail=True, methods=['delete'])
+            def delete_profile(self, request, pk=None):
+                """Elimina un perfil facial"""
+                try:
+                    perfil = PerfilFacial.objects.get(id=pk)
+                    user_name = f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}"
 
-                # Eliminar registro de la base de datos
-                perfil.delete()
+                    # Eliminar imagen de Supabase Storage
+                    if perfil.imagen_path:
+                        delete_success = self.storage_service.delete_file(perfil.imagen_path)
+                        if not delete_success:
+                            logger.warning(f"No se pudo eliminar la imagen {perfil.imagen_path} de Supabase.")
 
-                # Recargar perfiles faciales en el servicio (¡Ahora funcionará!)
-                self.facial_service.load_known_faces()
+                    # Eliminar registro de la base de datos
+                    perfil.delete()
 
-                return Response({
-                    'success': True,
-                    'message': f'Perfil facial de {user_name} eliminado exitosamente'
-                }, status=status.HTTP_200_OK)
+                    # --- LÍNEA CORREGIDA ---
+                    # Ya no intentamos recargar los perfiles aquí.
 
-            except PerfilFacial.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Perfil no encontrado'
-                }, status=status.HTTP_404_NOT_FOUND)
-            except Exception as e:
-                logger.error(f"Error eliminando perfil: {str(e)}")
-                return Response({
-                    'success': False,
-                    'error': 'Ocurrió un error interno al eliminar el perfil.'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    return Response({
+                        'success': True,
+                        'message': f'Perfil facial de {user_name} eliminado exitosamente'
+                    }, status=status.HTTP_200_OK)  # Cambiado a 200 OK para devolver un mensaje
+
+                except PerfilFacial.DoesNotExist:
+                    return Response({
+                        'success': False,
+                        'error': 'Perfil no encontrado'
+                    }, status=status.HTTP_404_NOT_FOUND)
+                except Exception as e:
+                    logger.error(f"Error eliminando perfil: {str(e)}")
+                    return Response({
+                        'success': False,
+                        'error': 'Ocurrió un error interno al eliminar el perfil.'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         @action(detail=False, methods=['get'])
         def list_profiles(self, request):
@@ -1569,6 +1570,8 @@ class ComprobantePDFView(APIView):
         return FileResponse(buff, as_attachment=True, filename=f"comprobante_{factura.id}.pdf")
 
 
+# En api/views.py
+
 class SolicitudMantenimientoViewSet(BaseModelViewSet):
     serializer_class = SolicitudMantenimientoSerializer
 
@@ -1580,8 +1583,8 @@ class SolicitudMantenimientoViewSet(BaseModelViewSet):
         try:
             usuario = Usuario.objects.get(correo=self.request.user.email)
             if usuario.idrol and usuario.idrol.tipo == 'admin':
-                return SolicitudMantenimiento.objects.all()
-            return SolicitudMantenimiento.objects.filter(codigo_usuario=usuario)
+                return SolicitudMantenimiento.objects.all().select_related('codigo_usuario', 'codigo_propiedad', 'id_pago')
+            return SolicitudMantenimiento.objects.filter(codigo_usuario=usuario).select_related('codigo_usuario', 'codigo_propiedad', 'id_pago')
         except Usuario.DoesNotExist:
             return SolicitudMantenimiento.objects.none()
 
@@ -1591,11 +1594,9 @@ class SolicitudMantenimientoViewSet(BaseModelViewSet):
         """
         try:
             usuario = Usuario.objects.get(correo=self.request.user.email)
-            # Buscamos la propiedad activa del usuario
             pertenencia_activa = Pertenece.objects.filter(codigo_usuario=usuario, fecha_fin__isnull=True).first()
             if not pertenencia_activa:
                 raise serializers.ValidationError("No tienes una propiedad activa asignada para crear una solicitud.")
-
             serializer.save(codigo_usuario=usuario, codigo_propiedad=pertenencia_activa.codigo_propiedad)
         except Usuario.DoesNotExist:
             raise serializers.ValidationError("Usuario no encontrado.")
@@ -1611,20 +1612,27 @@ class SolicitudMantenimientoViewSet(BaseModelViewSet):
         solicitud.estado = nuevo_estado
         solicitud.save()
 
-        # --- LÓGICA DE COBRO AUTOMÁTICO ---
         if nuevo_estado == 'Completada' and solicitud.id_pago:
-            # Si el servicio se completó y tiene un costo asociado, creamos la factura.
             Factura.objects.create(
                 codigo_usuario=solicitud.codigo_usuario,
                 id_pago=solicitud.id_pago,
                 fecha=timezone.now().date(),
                 hora=timezone.now().time(),
                 tipo_pago='Servicio Solicitado',
-                estado='pendiente'  # El usuario deberá pagarlo desde su estado de cuenta
+                estado='pendiente'
             )
-        # --- FIN DE LA LÓGICA DE COBRO ---
-
         return Response(self.get_serializer(solicitud).data)
+
+    # --- ¡NUEVA FUNCIÓN AÑADIDA! ---
+    @action(detail=False, methods=['get'], url_path='servicios-disponibles')
+    def list_services(self, request):
+        """
+        Devuelve una lista de todos los items del catálogo de Pagos
+        que están marcados como 'Servicio'.
+        """
+        servicios = Pagos.objects.filter(tipo='Servicio')
+        serializer = PagoSerializer(servicios, many=True)
+        return Response(serializer.data)
 
 
 import traceback
