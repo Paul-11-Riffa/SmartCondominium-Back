@@ -144,7 +144,15 @@ class Vehiculo(models.Model):
     def __str__(self):
         return self.nro_placa or f"Vehículo {self.id}"
 
+
 class Pertenece(models.Model):
+    # --- INICIO DE LA MODIFICACIÓN ---
+    class RolEnPropiedad(models.TextChoices):
+        PROPIETARIO = 'Propietario', 'Propietario'
+        COPROPIETARIO = 'Copropietario', 'Copropietario'
+        INQUILINO = 'Inquilino', 'Inquilino'
+        FAMILIAR = 'Familiar', 'Familiar Residente'
+
     id = models.BigAutoField(primary_key=True, db_column="Id")
     codigo_usuario = models.ForeignKey(
         "Usuario", models.DO_NOTHING, null=True, blank=True,
@@ -157,13 +165,22 @@ class Pertenece(models.Model):
     fecha_ini = models.DateField(null=True, blank=True, db_column="FechaIni")
     fecha_fin = models.DateField(null=True, blank=True, db_column="FechaFin")
 
+    # --- CAMPO AÑADIDO ---
+    rol_en_propiedad = models.TextField(
+        db_column="RolEnPropiedad",
+        choices=RolEnPropiedad.choices,
+        default=RolEnPropiedad.INQUILINO,
+        null=False
+    )
+
     class Meta:
-        managed = False
+        managed = True  # <-- CAMBIO MUY IMPORTANTE DE False a True
         db_table = "Pertenece"
+
+    # --- FIN DE LA MODIFICACIÓN ---
 
     def __str__(self):
         return f"Pertenece {self.id}"
-
 
 class ListaVisitantes(models.Model):
     id = models.BigAutoField(primary_key=True, db_column="Id")
