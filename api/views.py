@@ -394,11 +394,30 @@ class VehiculoViewSet(BaseModelViewSet):
 # Entidades con FK
 # ---------------------------------------------------------------------
 class UsuarioViewSet(BaseModelViewSet):
+    permission_classes = [IsAdmin]  # <-- 1. SOLO ADMINS PUEDEN GESTIONAR USUARIOS
     queryset = Usuario.objects.all().order_by('codigo')
     serializer_class = UsuarioSerializer
     filterset_fields = ['idrol', 'sexo', 'estado', 'correo', 'telefono']
     search_fields = ['nombre', 'apellido', 'correo', 'estado']
     ordering_fields = ['codigo', 'telefono']
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Sobrescribe el método de borrado para asegurar una eliminación completa.
+        """
+        instance = self.get_object()
+
+        # 2. Busca y elimina el usuario de autenticación de Django
+        # para prevenir cuentas huérfanas.
+        dj_user = User.objects.filter(username=instance.correo).first()
+        if dj_user:
+            dj_user.delete()
+
+        # 3. Llama al método de borrado original para eliminar el registro de la tabla Usuario.
+        self.perform_destroy(instance)
+
+        # Devuelve una respuesta de éxito sin contenido.
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class PerteneceViewSet(BaseModelViewSet):
@@ -745,6 +764,12 @@ class LoginView(APIView):
             u = Usuario.objects.get(correo=email)
         except Usuario.DoesNotExist:
             return Response({"detail": "Usuario no existe."}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+            # 2) Comparación simple (demo). En prod: NO uses texto plano.
+        if u.contrasena != password:
+            return Response({"detail": "Credenciales inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
 
         # 2) Comparación simple (demo). En prod: NO uses texto plano.
         if u.contrasena != password:
