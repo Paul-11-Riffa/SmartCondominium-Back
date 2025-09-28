@@ -1485,11 +1485,12 @@ class EstadoCuentaView(APIView):
 
 
 # -------- Endpoint: PDF Comprobante ----------
+# En api/views.py
+
 class ComprobantePDFView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk: int):
-        # Verifica que la factura pertenezca al usuario
         try:
             user = Usuario.objects.get(correo=request.user.email)
             factura = (
@@ -1500,7 +1501,6 @@ class ComprobantePDFView(APIView):
         except (Usuario.DoesNotExist, Factura.DoesNotExist):
             raise Http404()
 
-        # Generar PDF simple
         buff = BytesIO()
         c = canvas.Canvas(buff, pagesize=A4)
         w, h = A4
@@ -1510,17 +1510,22 @@ class ComprobantePDFView(APIView):
 
         c.setFont("Helvetica", 11)
         y = h - 110
+
+        # --- CÓDIGO MEJORADO Y MÁS SEGURO ---
+        # Nos aseguramos de que todos los datos sean texto antes de dibujarlos
         rows = [
             ("N° Comprobante", str(factura.id)),
-            ("Fecha", factura.fecha.strftime("%Y-%m-%d")),
-            ("Hora", factura.hora.strftime("%H:%M:%S")),
+            ("Fecha", factura.fecha.strftime("%Y-%m-%d") if factura.fecha else "N/A"),
+            ("Hora", factura.hora.strftime("%H:%M:%S") if factura.hora else "N/A"),
             ("Usuario", f"{factura.codigo_usuario.nombre} {factura.codigo_usuario.apellido}"),
             ("Correo", factura.codigo_usuario.correo),
-            ("Concepto", factura.id_pago.descripcion),
-            ("Tipo de Pago", factura.tipo_pago),
-            ("Monto", f"{factura.id_pago.monto:.2f}"),
-            ("Estado", factura.estado),
+            ("Concepto", factura.id_pago.descripcion if factura.id_pago else "Concepto no disponible"),
+            ("Tipo de Pago", str(factura.tipo_pago)),
+            ("Monto (Bs.)",
+             f"{factura.id_pago.monto:.2f}" if factura.id_pago and factura.id_pago.monto is not None else "0.00"),
+            ("Estado", str(factura.estado)),
         ]
+
         for label, value in rows:
             c.drawString(40, y, f"{label}: {value}")
             y -= 20
@@ -1531,7 +1536,6 @@ class ComprobantePDFView(APIView):
         c.save()
         buff.seek(0)
 
-        # Bitácora
         _bitacora(request, f"Descarga comprobante #{factura.id}")
 
         return FileResponse(buff, as_attachment=True, filename=f"comprobante_{factura.id}.pdf")
@@ -2004,6 +2008,7 @@ class ReporteBitacoraView(APIView):
             return Response({'error': f'Ocurrió un error al generar el reporte: {str(e)}'}, status=500)
 
 
+# En api/views.py
 
 class HistorialPagosView(APIView):
     """
@@ -2019,7 +2024,6 @@ class HistorialPagosView(APIView):
             estado='pagado'
         ).select_related('id_pago').order_by('-fecha', '-hora')
 
-        # Reutilizamos el serializer que ya teníamos para formatear los datos
         serializer = PagoRealizadoSerializer(historial_qs, many=True)
         return serializer.data
 
@@ -2034,13 +2038,17 @@ class HistorialPagosView(APIView):
         elements.append(Paragraph(f"Residente: {user.nombre} {user.apellido}", styles['h3']))
         elements.append(Spacer(1, 24))
 
+        # --- CÓDIGO MEJORADO Y MÁS SEGURO ---
+        # 1. Encabezados de la tabla
         table_data = [["Fecha", "Concepto", "Monto (Bs.)", "Tipo de Pago"]]
+
+        # 2. Convertimos CADA dato a string antes de añadirlo a la tabla
         for item in history_data:
             table_data.append([
-                item['fecha'],
-                item['concepto'],
-                item['monto'],
-                item['tipo_pago']
+                str(item['fecha']),
+                str(item['concepto']),
+                str(item['monto']),
+                str(item['tipo_pago'])
             ])
 
         if not history_data:
@@ -2055,7 +2063,7 @@ class HistorialPagosView(APIView):
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
             ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('ALIGN', (2, 1), (2, -1), 'RIGHT'),  # Alinear montos a la derecha
+            ('ALIGN', (2, 1), (2, -1), 'RIGHT'),
         ])
         if not history_data:
             style.add('SPAN', (0, 1), (-1, 1))
@@ -2070,17 +2078,15 @@ class HistorialPagosView(APIView):
         return response
 
     def get(self, request):
-        export_format = request.query_params.get('format')
+        export_param = request.query_params.get('export')
 
         try:
             usuario = Usuario.objects.get(correo=request.user.email)
             history_data = self._get_history_data(usuario)
 
-            if export_format == 'pdf':
+            if export_param == 'pdf':
                 return self._generate_pdf_history(history_data, usuario)
-            # Aquí podrías añadir la lógica para 'xlsx' si lo necesitas
             else:
-                # Por defecto, devuelve los datos en JSON
                 return Response(history_data)
 
         except Usuario.DoesNotExist:
