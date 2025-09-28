@@ -38,7 +38,9 @@ router.register(r'envios', EnvioViewSet)
 router.register(r'registros', RegistroViewSet)
 router.register(r'solicitudes-mantenimiento', SolicitudMantenimientoViewSet, basename='solicitud-mantenimiento')
 router.register(r'bitacora', BitacoraViewSet)
-router.register(r'ai-detection', AIDetectionViewSet, basename='ai-detection')
+if AIDetectionViewSet:
+    router.register(r'ai-detection', AIDetectionViewSet, basename='ai-detection')
+# --- FIN DE LA MODIFICACIÓN ---
 router.register(r'reconocimientos-faciales', ReconocimientoFacialViewSet)
 router.register(r'detecciones-placas', DeteccionPlacaViewSet)
 router.register(r'perfiles-faciales', PerfilFacialViewSet)

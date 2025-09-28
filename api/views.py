@@ -951,347 +951,34 @@ logger = logging.getLogger(__name__)
 
 from .services.ai_detection import FacialRecognitionService, PlateDetectionService
 
+try:
+    from .services.ai_detection import FacialRecognitionService, PlateDetectionService
+except ImportError:
+    FacialRecognitionService = None
+    PlateDetectionService = None
 
-class AIDetectionViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+# Solo definimos la clase AIDetectionViewSet si los servicios se importaron correctamente
+if FacialRecognitionService and PlateDetectionService:
+    class AIDetectionViewSet(viewsets.ViewSet):
+        permission_classes = [permissions.IsAuthenticated]
+        parser_classes = [MultiPartParser, FormParser]
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.storage_service = SupabaseStorageService()
+            self.facial_service = FacialRecognitionService()
+            self.plate_service = PlateDetectionService()
 
-        self.storage_service = SupabaseStorageService()
-        self.facial_service = FacialRecognitionService()
-        self.plate_service = PlateDetectionService()
+        # ... (Aquí va TODO el código de la clase AIDetectionViewSet, sin cambios en su interior)
+        # ... (Desde @action(detail=False, methods=['post']) def recognize_face...)
+        # ... (Hasta el final de la clase con la función detection_stats)
 
-    # ============= RECONOCIMIENTO FACIAL =============
-    @action(detail=False, methods=['post'])
-    def recognize_face(self, request):
-        # 1. Obtener la imagen (esto no cambia)
-        image_file = request.FILES.get('image')
-        camera_location = request.data.get('camera_location', 'Principal')
-
-        if not image_file:
-            return Response(
-                {'error': 'La imagen es requerida como archivo'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # 2. Enviar la imagen al worker local
-        try:
-            if not AI_WORKER_URL:
-                # Fallback de seguridad si la URL no está configurada
-                logger.error("AI_WORKER_URL no está configurada en las variables de entorno.")
-                return Response({'error': 'El servicio de IA no está configurado'}, status=503)
-
-            files = {'image': (image_file.name, image_file.read(), image_file.content_type)}
-
-            # El endpoint en tu worker.py
-            worker_endpoint = f"{AI_WORKER_URL}/recognize_face"
-
-            # Hacemos la petición a tu PC
-            response = requests.post(worker_endpoint, files=files, timeout=60)  # Timeout de 60 segundos
-            response.raise_for_status()  # Lanza un error si la respuesta no es 2xx
-
-            # El resultado que viene desde tu PC
-            result = response.json()
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error contactando al worker de IA: {e}")
-            return Response({'error': 'El servicio de IA no está disponible o tardó demasiado en responder'},
-                            status=503)
-
-        # 3. Usar el resultado para crear el Reporte de Seguridad (esta lógica se queda aquí)
-        try:
-            if not result.get('is_resident'):
-                ReporteSeguridad.objects.create(
-                    tipo_evento='intruso_detectado',
-                    reconocimiento_facial_id=result.get('id'),
-                    descripcion=f"Persona no identificada detectada en {camera_location}",
-                    nivel_alerta='alto'
-                )
-
-            logger.info(f"Reconocimiento completado por el worker - residente: {result.get('is_resident')}")
-            return Response(result, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            # Este error ocurriría si hay un problema con la base de datos al guardar el reporte
-            logger.error(f"Error guardando el resultado del reconocimiento: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return Response(
-                {'error': 'Error interno del servidor al procesar el resultado'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    # ============= REGISTRO DE PERFILES FACIALES =============
-    @action(detail=False, methods=['post'])
-    def register_profile(self, request):
-        """Registra un nuevo perfil facial para un usuario específico"""
-        try:
-            user_id = request.data.get('user_id')
+        # ============= RECONOCIMIENTO FACIAL =============
+        @action(detail=False, methods=['post'])
+        def recognize_face(self, request):
+            # 1. Obtener la imagen (esto no cambia)
             image_file = request.FILES.get('image')
-
-            if not user_id or not image_file:
-                return Response({
-                    'success': False,
-                    'error': 'user_id e imagen son requeridos'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Verificar que el usuario existe
-            try:
-                usuario = Usuario.objects.get(codigo=user_id)
-            except Usuario.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Usuario no encontrado'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # USAR EL NUEVO MÉTODO QUE MANEJA ARCHIVOS DIRECTAMENTE
-            success = self.facial_service.register_face_from_file(int(user_id), image_file)
-
-            if success:
-                # Obtener el perfil creado
-                perfil = PerfilFacial.objects.get(codigo_usuario=usuario)
-
-                return Response({
-                    'success': True,
-                    'message': f'Perfil facial registrado exitosamente para {usuario.nombre} {usuario.apellido}',
-                    'profile_id': perfil.id,
-                    'user': {
-                        'codigo': usuario.codigo,
-                        'nombre': usuario.nombre,
-                        'apellido': usuario.apellido,
-                        'correo': usuario.correo
-                    },
-                    'image_url': perfil.imagen_url
-                }, status=status.HTTP_201_CREATED)
-            else:
-                return Response({
-                    'success': False,
-                    'error': 'No se pudo registrar el perfil facial'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            logger.error(f"Error registrando perfil facial: {str(e)}")
-            return Response({
-                'success': False,
-                'error': f'Error interno del servidor: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['post'])
-    def register_current_user(self, request):
-        """Registra perfil facial del usuario autenticado actual"""
-        try:
-            # Obtener imagen del FormData
-            image_file = request.FILES.get('image')
-
-            logger.info(f"Datos recibidos - image_file: {'Si' if image_file else 'No'}")
-
-            if not image_file:
-                return Response({
-                    'success': False,
-                    'error': 'La imagen es requerida como archivo'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Obtener usuario autenticado desde token
-            try:
-                usuario = Usuario.objects.get(correo=request.user.email)
-                logger.info(f"Usuario encontrado: {usuario.nombre} {usuario.apellido}")
-            except Usuario.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Usuario no encontrado en el sistema'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Verificar si ya tiene un perfil registrado
-            existing_profile = PerfilFacial.objects.filter(codigo_usuario=usuario, activo=True).first()
-            if existing_profile:
-                logger.info(f"Usuario ya tiene perfil facial: {existing_profile.id}")
-                return Response({
-                    'success': False,
-                    'error': 'Ya tienes un perfil facial registrado. Elimínalo primero si quieres crear uno nuevo.'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # USAR EL NUEVO MÉTODO QUE MANEJA ARCHIVOS DIRECTAMENTE
-            success = self.facial_service.register_face_from_file(usuario.codigo, image_file)
-
-            if success:
-                # Obtener el perfil creado por el servicio
-                profile = PerfilFacial.objects.get(codigo_usuario=usuario, activo=True)
-
-                logger.info(f"Perfil facial creado exitosamente: {profile.id}")
-
-                return Response({
-                    'success': True,
-                    'message': f'Perfil facial registrado exitosamente para {usuario.nombre}',
-                    'profile_id': profile.id,
-                    'user': {
-                        'codigo': usuario.codigo,
-                        'nombre': usuario.nombre,
-                        'apellido': usuario.apellido,
-                        'correo': usuario.correo
-                    },
-                    'image_url': profile.imagen_url
-                }, status=status.HTTP_201_CREATED)
-            else:
-                return Response({
-                    'success': False,
-                    'error': 'No se pudo registrar el perfil facial. Verifica que la imagen contenga una cara visible.'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            logger.error(f"Error registrando perfil del usuario actual: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return Response({
-                'success': False,
-                'error': 'Error interno del servidor'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['get'])
-    def list_profiles(self, request):
-        """Lista todos los perfiles faciales registrados"""
-        try:
-            profiles = PerfilFacial.objects.filter(activo=True).select_related('codigo_usuario')
-
-            profiles_data = []
-            for profile in profiles:
-                profiles_data.append({
-                    'id': profile.id,
-                    'user_id': profile.codigo_usuario.codigo,
-                    'user_name': f"{profile.codigo_usuario.nombre} {profile.codigo_usuario.apellido}",
-                    'user_email': profile.codigo_usuario.correo,
-                    'image_url': profile.imagen_url,
-                    'fecha_registro': profile.fecha_registro.isoformat(),
-                    'activo': profile.activo
-                })
-
-            return Response({
-                'success': True,
-                'profiles': profiles_data,
-                'count': len(profiles_data)
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Error listando perfiles: {str(e)}")
-            return Response({
-                'success': False,
-                'error': 'Error interno del servidor',
-                'profiles': [],
-                'count': 0
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # Y la función delete_profile:
-
-    @action(detail=True, methods=['delete'])
-    def delete_profile(self, request, pk=None):
-        """Elimina un perfil facial"""
-        try:
-            perfil = PerfilFacial.objects.get(id=pk)
-            user_name = f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}"
-
-            # Eliminar imagen de Supabase Storage
-            if perfil.imagen_path:
-                delete_success = self.storage_service.delete_file(perfil.imagen_path)
-                if not delete_success:
-                    # Opcional: advertir si la imagen no se pudo borrar, pero continuar
-                    logger.warning(f"No se pudo eliminar la imagen {perfil.imagen_path} de Supabase.")
-
-            # Eliminar registro de la base de datos
-            perfil.delete()
-
-            # Recargar perfiles faciales en el servicio (¡Ahora funcionará!)
-            self.facial_service.load_known_faces()
-
-            return Response({
-                'success': True,
-                'message': f'Perfil facial de {user_name} eliminado exitosamente'
-            }, status=status.HTTP_200_OK)
-
-        except PerfilFacial.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Perfil no encontrado'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            logger.error(f"Error eliminando perfil: {str(e)}")
-            return Response({
-                'success': False,
-                'error': 'Ocurrió un error interno al eliminar el perfil.'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['get'])
-    def list_profiles(self, request):
-        """Lista todos los perfiles faciales registrados"""
-        try:
-            perfiles = PerfilFacial.objects.select_related('codigo_usuario').filter(activo=True)
-
-            profiles_data = []
-            for perfil in perfiles:
-                profiles_data.append({
-                    'id': perfil.id,
-                    'user_id': perfil.codigo_usuario.codigo,
-                    'user_name': f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}",
-                    'user_email': perfil.codigo_usuario.correo,
-                    'image_url': perfil.imagen_url,
-                    'fecha_registro': perfil.fecha_registro.isoformat(),
-                    'activo': perfil.activo
-                })
-
-            return Response({
-                'success': True,
-                'profiles': profiles_data,
-                'count': len(profiles_data)
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Error obteniendo perfiles: {str(e)}")
-            return Response({
-                'success': False,
-                'error': 'Error obteniendo perfiles'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['delete'])
-    def delete_profile(self, request, pk=None):
-        """Elimina un perfil facial"""
-        try:
-            perfil = PerfilFacial.objects.get(id=pk)
-
-            # Eliminar imagen de Supabase Storage
-            if perfil.imagen_path:
-                self.storage_service.delete_file(perfil.imagen_path)
-
-            # Eliminar registro
-            user_name = f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}"
-            perfil.delete()
-
-            # Recargar perfiles faciales en el servicio
-            self.facial_service.load_known_faces()
-
-            return Response({
-                'success': True,
-                'message': f'Perfil facial de {user_name} eliminado exitosamente'
-            }, status=status.HTTP_200_OK)
-
-        except PerfilFacial.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Perfil no encontrado'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            logger.error(f"Error eliminando perfil: {str(e)}")
-            return Response({
-                'success': False,
-                'error': 'Error eliminando perfil'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # ============= DETECCIÓN DE PLACAS =============
-    @action(detail=False, methods=['post'])
-    def detect_plate(self, request):
-        try:
-            # Obtener datos del FormData
-            image_file = request.FILES.get('image')
-            camera_location = request.data.get('camera_location', 'Estacionamiento')
-            access_type = request.data.get('access_type', 'entrada')
+            camera_location = request.data.get('camera_location', 'Principal')
 
             if not image_file:
                 return Response(
@@ -1299,71 +986,398 @@ class AIDetectionViewSet(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            logger.info(f"Procesando detección de placa - cámara: {camera_location}, tipo: {access_type}")
+            # 2. Enviar la imagen al worker local
+            try:
+                if not AI_WORKER_URL:
+                    # Fallback de seguridad si la URL no está configurada
+                    logger.error("AI_WORKER_URL no está configurada en las variables de entorno.")
+                    return Response({'error': 'El servicio de IA no está configurado'}, status=503)
 
-            # USAR EL NUEVO MÉTODO QUE MANEJA ARCHIVOS DIRECTAMENTE
-            result = self.plate_service.detect_plate_from_file(
-                image_file, camera_location, access_type
-            )
+                files = {'image': (image_file.name, image_file.read(), image_file.content_type)}
 
-            # Crear reporte de seguridad si la placa no está autorizada
-            if result['plate'] and not result['is_authorized']:
-                ReporteSeguridad.objects.create(
-                    tipo_evento='placa_no_autorizada',
-                    deteccion_placa_id=result['id'],
-                    descripcion=f"Placa no autorizada detectada: {result['plate']} en {camera_location}",
-                    nivel_alerta='medio'
+                # El endpoint en tu worker.py
+                worker_endpoint = f"{AI_WORKER_URL}/recognize_face"
+
+                # Hacemos la petición a tu PC
+                response = requests.post(worker_endpoint, files=files, timeout=60)  # Timeout de 60 segundos
+                response.raise_for_status()  # Lanza un error si la respuesta no es 2xx
+
+                # El resultado que viene desde tu PC
+                result = response.json()
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error contactando al worker de IA: {e}")
+                return Response({'error': 'El servicio de IA no está disponible o tardó demasiado en responder'},
+                                status=503)
+
+            # 3. Usar el resultado para crear el Reporte de Seguridad (esta lógica se queda aquí)
+            try:
+                if not result.get('is_resident'):
+                    ReporteSeguridad.objects.create(
+                        tipo_evento='intruso_detectado',
+                        reconocimiento_facial_id=result.get('id'),
+                        descripcion=f"Persona no identificada detectada en {camera_location}",
+                        nivel_alerta='alto'
+                    )
+
+                logger.info(f"Reconocimiento completado por el worker - residente: {result.get('is_resident')}")
+                return Response(result, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                # Este error ocurriría si hay un problema con la base de datos al guardar el reporte
+                logger.error(f"Error guardando el resultado del reconocimiento: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return Response(
+                    {'error': 'Error interno del servidor al procesar el resultado'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-            logger.info(f"Detección completada - placa: {result.get('plate', 'No detectada')}")
-            return Response(result, status=status.HTTP_200_OK)
+        # ============= REGISTRO DE PERFILES FACIALES =============
+        @action(detail=False, methods=['post'])
+        def register_profile(self, request):
+            """Registra un nuevo perfil facial para un usuario específico"""
+            try:
+                user_id = request.data.get('user_id')
+                image_file = request.FILES.get('image')
 
-        except Exception as e:
-            logger.error(f"Error en detección de placa: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return Response(
-                {'error': 'Error interno del servidor'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                if not user_id or not image_file:
+                    return Response({
+                        'success': False,
+                        'error': 'user_id e imagen son requeridos'
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
-    # ============= ESTADÍSTICAS =============
-    @action(detail=False, methods=['get'])
-    def detection_stats(self, request):
-        try:
-            now = timezone.now()
-            last_24h = now - timedelta(hours=24)
-            last_week = now - timedelta(days=7)
+                # Verificar que el usuario existe
+                try:
+                    usuario = Usuario.objects.get(codigo=user_id)
+                except Usuario.DoesNotExist:
+                    return Response({
+                        'success': False,
+                        'error': 'Usuario no encontrado'
+                    }, status=status.HTTP_404_NOT_FOUND)
 
-            stats = {
-                'facial_recognitions_today': ReconocimientoFacial.objects.filter(
-                    fecha_deteccion__gte=last_24h
-                ).count(),
-                'plate_detections_today': DeteccionPlaca.objects.filter(
-                    fecha_deteccion__gte=last_24h
-                ).count(),
-                'residents_detected_today': ReconocimientoFacial.objects.filter(
-                    fecha_deteccion__gte=last_24h,
-                    es_residente=True
-                ).count(),
-                'unauthorized_plates_today': DeteccionPlaca.objects.filter(
-                    fecha_deteccion__gte=last_24h,
-                    es_autorizado=False
-                ).count(),
-                'security_alerts_week': ReporteSeguridad.objects.filter(
-                    fecha_evento__gte=last_week,
-                    nivel_alerta__in=['alto', 'critico']
-                ).count(),
-                'registered_faces': PerfilFacial.objects.filter(activo=True).count()
-            }
+                # USAR EL NUEVO MÉTODO QUE MANEJA ARCHIVOS DIRECTAMENTE
+                success = self.facial_service.register_face_from_file(int(user_id), image_file)
 
-            return Response(stats, status=status.HTTP_200_OK)
+                if success:
+                    # Obtener el perfil creado
+                    perfil = PerfilFacial.objects.get(codigo_usuario=usuario)
 
-        except Exception as e:
-            logger.error(f"Error obteniendo estadísticas: {e}")
-            return Response(
-                {'error': 'Error interno del servidor'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                    return Response({
+                        'success': True,
+                        'message': f'Perfil facial registrado exitosamente para {usuario.nombre} {usuario.apellido}',
+                        'profile_id': perfil.id,
+                        'user': {
+                            'codigo': usuario.codigo,
+                            'nombre': usuario.nombre,
+                            'apellido': usuario.apellido,
+                            'correo': usuario.correo
+                        },
+                        'image_url': perfil.imagen_url
+                    }, status=status.HTTP_201_CREATED)
+                else:
+                    return Response({
+                        'success': False,
+                        'error': 'No se pudo registrar el perfil facial'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            except Exception as e:
+                logger.error(f"Error registrando perfil facial: {str(e)}")
+                return Response({
+                    'success': False,
+                    'error': f'Error interno del servidor: {str(e)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        @action(detail=False, methods=['post'])
+        def register_current_user(self, request):
+            """Registra perfil facial del usuario autenticado actual"""
+            try:
+                # Obtener imagen del FormData
+                image_file = request.FILES.get('image')
+
+                logger.info(f"Datos recibidos - image_file: {'Si' if image_file else 'No'}")
+
+                if not image_file:
+                    return Response({
+                        'success': False,
+                        'error': 'La imagen es requerida como archivo'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Obtener usuario autenticado desde token
+                try:
+                    usuario = Usuario.objects.get(correo=request.user.email)
+                    logger.info(f"Usuario encontrado: {usuario.nombre} {usuario.apellido}")
+                except Usuario.DoesNotExist:
+                    return Response({
+                        'success': False,
+                        'error': 'Usuario no encontrado en el sistema'
+                    }, status=status.HTTP_404_NOT_FOUND)
+
+                # Verificar si ya tiene un perfil registrado
+                existing_profile = PerfilFacial.objects.filter(codigo_usuario=usuario, activo=True).first()
+                if existing_profile:
+                    logger.info(f"Usuario ya tiene perfil facial: {existing_profile.id}")
+                    return Response({
+                        'success': False,
+                        'error': 'Ya tienes un perfil facial registrado. Elimínalo primero si quieres crear uno nuevo.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # USAR EL NUEVO MÉTODO QUE MANEJA ARCHIVOS DIRECTAMENTE
+                success = self.facial_service.register_face_from_file(usuario.codigo, image_file)
+
+                if success:
+                    # Obtener el perfil creado por el servicio
+                    profile = PerfilFacial.objects.get(codigo_usuario=usuario, activo=True)
+
+                    logger.info(f"Perfil facial creado exitosamente: {profile.id}")
+
+                    return Response({
+                        'success': True,
+                        'message': f'Perfil facial registrado exitosamente para {usuario.nombre}',
+                        'profile_id': profile.id,
+                        'user': {
+                            'codigo': usuario.codigo,
+                            'nombre': usuario.nombre,
+                            'apellido': usuario.apellido,
+                            'correo': usuario.correo
+                        },
+                        'image_url': profile.imagen_url
+                    }, status=status.HTTP_201_CREATED)
+                else:
+                    return Response({
+                        'success': False,
+                        'error': 'No se pudo registrar el perfil facial. Verifica que la imagen contenga una cara visible.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            except Exception as e:
+                logger.error(f"Error registrando perfil del usuario actual: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return Response({
+                    'success': False,
+                    'error': 'Error interno del servidor'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        @action(detail=False, methods=['get'])
+        def list_profiles(self, request):
+            """Lista todos los perfiles faciales registrados"""
+            try:
+                profiles = PerfilFacial.objects.filter(activo=True).select_related('codigo_usuario')
+
+                profiles_data = []
+                for profile in profiles:
+                    profiles_data.append({
+                        'id': profile.id,
+                        'user_id': profile.codigo_usuario.codigo,
+                        'user_name': f"{profile.codigo_usuario.nombre} {profile.codigo_usuario.apellido}",
+                        'user_email': profile.codigo_usuario.correo,
+                        'image_url': profile.imagen_url,
+                        'fecha_registro': profile.fecha_registro.isoformat(),
+                        'activo': profile.activo
+                    })
+
+                return Response({
+                    'success': True,
+                    'profiles': profiles_data,
+                    'count': len(profiles_data)
+                }, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                logger.error(f"Error listando perfiles: {str(e)}")
+                return Response({
+                    'success': False,
+                    'error': 'Error interno del servidor',
+                    'profiles': [],
+                    'count': 0
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Y la función delete_profile:
+
+        @action(detail=True, methods=['delete'])
+        def delete_profile(self, request, pk=None):
+            """Elimina un perfil facial"""
+            try:
+                perfil = PerfilFacial.objects.get(id=pk)
+                user_name = f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}"
+
+                # Eliminar imagen de Supabase Storage
+                if perfil.imagen_path:
+                    delete_success = self.storage_service.delete_file(perfil.imagen_path)
+                    if not delete_success:
+                        # Opcional: advertir si la imagen no se pudo borrar, pero continuar
+                        logger.warning(f"No se pudo eliminar la imagen {perfil.imagen_path} de Supabase.")
+
+                # Eliminar registro de la base de datos
+                perfil.delete()
+
+                # Recargar perfiles faciales en el servicio (¡Ahora funcionará!)
+                self.facial_service.load_known_faces()
+
+                return Response({
+                    'success': True,
+                    'message': f'Perfil facial de {user_name} eliminado exitosamente'
+                }, status=status.HTTP_200_OK)
+
+            except PerfilFacial.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Perfil no encontrado'
+                }, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                logger.error(f"Error eliminando perfil: {str(e)}")
+                return Response({
+                    'success': False,
+                    'error': 'Ocurrió un error interno al eliminar el perfil.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        @action(detail=False, methods=['get'])
+        def list_profiles(self, request):
+            """Lista todos los perfiles faciales registrados"""
+            try:
+                perfiles = PerfilFacial.objects.select_related('codigo_usuario').filter(activo=True)
+
+                profiles_data = []
+                for perfil in perfiles:
+                    profiles_data.append({
+                        'id': perfil.id,
+                        'user_id': perfil.codigo_usuario.codigo,
+                        'user_name': f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}",
+                        'user_email': perfil.codigo_usuario.correo,
+                        'image_url': perfil.imagen_url,
+                        'fecha_registro': perfil.fecha_registro.isoformat(),
+                        'activo': perfil.activo
+                    })
+
+                return Response({
+                    'success': True,
+                    'profiles': profiles_data,
+                    'count': len(profiles_data)
+                }, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                logger.error(f"Error obteniendo perfiles: {str(e)}")
+                return Response({
+                    'success': False,
+                    'error': 'Error obteniendo perfiles'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        @action(detail=True, methods=['delete'])
+        def delete_profile(self, request, pk=None):
+            """Elimina un perfil facial"""
+            try:
+                perfil = PerfilFacial.objects.get(id=pk)
+
+                # Eliminar imagen de Supabase Storage
+                if perfil.imagen_path:
+                    self.storage_service.delete_file(perfil.imagen_path)
+
+                # Eliminar registro
+                user_name = f"{perfil.codigo_usuario.nombre} {perfil.codigo_usuario.apellido}"
+                perfil.delete()
+
+                # Recargar perfiles faciales en el servicio
+                self.facial_service.load_known_faces()
+
+                return Response({
+                    'success': True,
+                    'message': f'Perfil facial de {user_name} eliminado exitosamente'
+                }, status=status.HTTP_200_OK)
+
+            except PerfilFacial.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Perfil no encontrado'
+                }, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                logger.error(f"Error eliminando perfil: {str(e)}")
+                return Response({
+                    'success': False,
+                    'error': 'Error eliminando perfil'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # ============= DETECCIÓN DE PLACAS =============
+        @action(detail=False, methods=['post'])
+        def detect_plate(self, request):
+            try:
+                # Obtener datos del FormData
+                image_file = request.FILES.get('image')
+                camera_location = request.data.get('camera_location', 'Estacionamiento')
+                access_type = request.data.get('access_type', 'entrada')
+
+                if not image_file:
+                    return Response(
+                        {'error': 'La imagen es requerida como archivo'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                logger.info(f"Procesando detección de placa - cámara: {camera_location}, tipo: {access_type}")
+
+                # USAR EL NUEVO MÉTODO QUE MANEJA ARCHIVOS DIRECTAMENTE
+                result = self.plate_service.detect_plate_from_file(
+                    image_file, camera_location, access_type
+                )
+
+                # Crear reporte de seguridad si la placa no está autorizada
+                if result['plate'] and not result['is_authorized']:
+                    ReporteSeguridad.objects.create(
+                        tipo_evento='placa_no_autorizada',
+                        deteccion_placa_id=result['id'],
+                        descripcion=f"Placa no autorizada detectada: {result['plate']} en {camera_location}",
+                        nivel_alerta='medio'
+                    )
+
+                logger.info(f"Detección completada - placa: {result.get('plate', 'No detectada')}")
+                return Response(result, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                logger.error(f"Error en detección de placa: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return Response(
+                    {'error': 'Error interno del servidor'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        # ============= ESTADÍSTICAS =============
+        @action(detail=False, methods=['get'])
+        def detection_stats(self, request):
+            try:
+                now = timezone.now()
+                last_24h = now - timedelta(hours=24)
+                last_week = now - timedelta(days=7)
+
+                stats = {
+                    'facial_recognitions_today': ReconocimientoFacial.objects.filter(
+                        fecha_deteccion__gte=last_24h
+                    ).count(),
+                    'plate_detections_today': DeteccionPlaca.objects.filter(
+                        fecha_deteccion__gte=last_24h
+                    ).count(),
+                    'residents_detected_today': ReconocimientoFacial.objects.filter(
+                        fecha_deteccion__gte=last_24h,
+                        es_residente=True
+                    ).count(),
+                    'unauthorized_plates_today': DeteccionPlaca.objects.filter(
+                        fecha_deteccion__gte=last_24h,
+                        es_autorizado=False
+                    ).count(),
+                    'security_alerts_week': ReporteSeguridad.objects.filter(
+                        fecha_evento__gte=last_week,
+                        nivel_alerta__in=['alto', 'critico']
+                    ).count(),
+                    'registered_faces': PerfilFacial.objects.filter(activo=True).count()
+                }
+
+                return Response(stats, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                logger.error(f"Error obteniendo estadísticas: {e}")
+                return Response(
+                    {'error': 'Error interno del servidor'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+else:
+    # Si la importación falla, definimos AIDetectionViewSet como None
+    AIDetectionViewSet = None
 
 
 # -------- Helpers ----------

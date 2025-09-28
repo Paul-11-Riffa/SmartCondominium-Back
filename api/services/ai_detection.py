@@ -1,12 +1,21 @@
 # api/services/ai_detection.py
-import cv2
-import face_recognition
+
+# --- INICIO DE LA MODIFICACIÓN ---
+try:
+    import cv2
+    import face_recognition
+    import easyocr
+except ImportError:
+    # Estas librerías no estarán en producción, así que permitimos que fallen.
+    cv2 = None
+    face_recognition = None
+    easyocr = None
+# --- FIN DE LA MODIFICACIÓN ---
 import numpy as np
 import json
 import base64
 import io
 from PIL import Image
-import easyocr
 import re
 from typing import List, Tuple, Optional, Dict
 from django.conf import settings
