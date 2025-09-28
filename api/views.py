@@ -414,18 +414,54 @@ class UsuarioViewSet(BaseModelViewSet):
 
 # REEMPLAZA TU CLASE PerteneceViewSet ACTUAL CON ESTA VERSIÓN MEJORADA
 class PerteneceViewSet(BaseModelViewSet):
-    # --- MEJORA 1: AÑADIR PERMISOS DE ADMINISTRADOR ---
-    permission_classes = [IsAdmin]
-
-    queryset = Pertenece.objects.all().order_by('-fecha_ini')
+    # Ya no usamos permission_classes aquí para poder definir permisos por acción
     serializer_class = PerteneceSerializer
+    queryset = Pertenece.objects.all().order_by('-fecha_ini')
     filterset_fields = ['codigo_usuario', 'codigo_propiedad', 'fecha_ini', 'fecha_fin', 'rol_en_propiedad']
-    search_fields = []
-    ordering_fields = ['id', 'fecha_ini', 'fecha_fin']
 
-    # smartcondominium-back/api/views.py
-    # Dentro de la clase PerteneceViewSet
+    def get_permissions(self):
+        """
+        Instancia y retorna la lista de permisos que esta vista requiere.
+        """
+        if self.action in ['list', 'retrieve']:
+            # Para 'ver' la lista o un detalle, solo se necesita estar autenticado.
+            permission_classes = [IsAuthenticated]
+        else:
+            # Para cualquier otra acción (crear, editar, borrar), se necesita ser admin.
+            permission_classes = [IsAdmin]
+        return [permission() for permission in permission_classes]
 
+    def get_queryset(self):
+        """
+        Filtra el queryset para que los residentes solo vean sus propias asignaciones.
+        Los administradores ven todo.
+        """
+        user = self.request.user
+        queryset = super().get_queryset()
+
+        try:
+            usuario_actual = Usuario.objects.get(correo=user.email)
+            if not (usuario_actual.idrol and usuario_actual.idrol.tipo == 'admin'):
+                # Si no es admin, filtramos por su propio código de usuario.
+                queryset = queryset.filter(codigo_usuario=usuario_actual)
+
+            # Implementamos el filtro personalizado 'activas' que pide el frontend
+            if self.request.query_params.get('activas') == 'true':
+                from django.utils import timezone
+                today = timezone.now().date()
+                queryset = queryset.filter(
+                    fecha_ini__lte=today,
+                ).filter(
+                    models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=today)
+                )
+
+        except Usuario.DoesNotExist:
+            return queryset.none()
+
+        return queryset
+
+    # El resto de los métodos de PerteneceViewSet (create, destroy, etc.) no necesitan cambios.
+    # ... (pega aquí tus métodos create, destroy y _get_client_ip que ya tenías)
     def create(self, request, *args, **kwargs):
         codigo_usuario = request.data.get('codigo_usuario')
         codigo_propiedad = request.data.get('codigo_propiedad')
@@ -433,7 +469,6 @@ class PerteneceViewSet(BaseModelViewSet):
         fecha_fin = request.data.get('fecha_fin')
         rol_asignado = request.data.get('rol_en_propiedad')
 
-        # Validaciones iniciales no cambian
         if not all([codigo_usuario, codigo_propiedad, fecha_ini, rol_asignado]):
             return Response(
                 {'detail': 'Usuario, propiedad, fecha de inicio y rol son obligatorios.'},
@@ -450,12 +485,9 @@ class PerteneceViewSet(BaseModelViewSet):
         from datetime import datetime
         fecha_ini_date = datetime.strptime(fecha_ini, '%Y-%m-%d').date()
 
-        # --- INICIO DE LA LÓGICA CORREGIDA ---
-
-        # REGLA 1 (MODIFICADA): Un usuario no puede estar vinculado a la MISMA propiedad dos veces en el mismo período.
+        # Regla estricta: solo permite UNA propiedad activa por usuario
         conflicto_usuario = Pertenece.objects.filter(
             codigo_usuario=usuario,
-            codigo_propiedad=propiedad,  # <-- Se añade esta línea para restringir la búsqueda solo a esta propiedad
             fecha_ini__lte=fecha_ini_date,
         ).filter(
             models.Q(fecha_fin__isnull=True) | models.Q(fecha_fin__gte=fecha_ini_date)
@@ -463,12 +495,10 @@ class PerteneceViewSet(BaseModelViewSet):
 
         if conflicto_usuario:
             return Response(
-                # <-- Se actualiza el mensaje de error para ser más claro
-                {'detail': 'Este usuario ya está vinculado a ESTA propiedad en el período especificado.'},
+                {'detail': 'Este usuario ya está vinculado a OTRA propiedad en el período especificado.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # REGLA 2 (SIN CAMBIOS): Una propiedad solo puede tener UN 'Propietario'.
         if rol_asignado == 'Propietario':
             conflicto_propietario = Pertenece.objects.filter(
                 codigo_propiedad=propiedad,
@@ -484,9 +514,6 @@ class PerteneceViewSet(BaseModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        # --- FIN DE LA LÓGICA CORREGIDA ---
-
-        # El código de la bitácora no cambia
         try:
             admin_usuario = Usuario.objects.get(correo=request.user.email)
             Bitacora.objects.create(
@@ -501,15 +528,10 @@ class PerteneceViewSet(BaseModelViewSet):
 
         return super().create(request, *args, **kwargs)
 
-    # --- MEJORA 2: AÑADIR REGISTRO EN BITÁCORA AL ELIMINAR ---
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-
-        # Guardamos la información antes de borrar para usarla en el log
         usuario_asignado = instance.codigo_usuario
         propiedad_asignada = instance.codigo_propiedad
-
-        # Primero, registramos la acción en la bitácora
         try:
             admin_usuario = Usuario.objects.get(correo=request.user.email)
             Bitacora.objects.create(
@@ -520,9 +542,7 @@ class PerteneceViewSet(BaseModelViewSet):
                 ip=self._get_client_ip(request)
             )
         except Exception:
-            pass  # Si falla el log, no impedimos que la eliminación continúe
-
-        # Luego, procedemos con la eliminación
+            pass
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -534,7 +554,6 @@ class PerteneceViewSet(BaseModelViewSet):
             ip = request.META.get('REMOTE_ADDR')
         return ip
 
-
 class ListaVisitantesViewSet(BaseModelViewSet):
     queryset = ListaVisitantes.objects.all().order_by('id')
     serializer_class = ListaVisitantesSerializer
@@ -542,11 +561,10 @@ class ListaVisitantesViewSet(BaseModelViewSet):
     search_fields = ['nombre', 'apellido', 'carnet', 'motivovisita']
     ordering_fields = ['id', 'fechaini', 'fechafin']
 
-    # --- MÉTODO NUEVO: GENERAR PASE DE ACCESO ---
     @action(detail=True, methods=['get'])
     def generar_pase(self, request, pk=None):
         """
-        Genera una cadena de datos JSON para ser usada en un código QR.
+        Genera una URL para el pase de acceso QR que lleva a una página pública.
         """
         try:
             visitante = self.get_object()
@@ -562,17 +580,27 @@ class ListaVisitantesViewSet(BaseModelViewSet):
                 "valido_hasta": visitante.fecha_fin.isoformat(),
             }
 
-            # Convertimos el diccionario a un string JSON
-            qr_string = json.dumps(pass_data, ensure_ascii=False)
+            # 1. Convertimos el diccionario a un string JSON
+            json_string = json.dumps(pass_data, ensure_ascii=False)
 
-            return Response({'qr_data': qr_string}, status=status.HTTP_200_OK)
+            # 2. Codificamos el string JSON en Base64 para que sea seguro en una URL
+            import base64
+            base64_string = base64.b64encode(json_string.encode('utf-8')).decode('utf-8')
+
+            # 3. Obtenemos la URL del frontend desde la configuración
+            from django.conf import settings
+            frontend_url = settings.FRONTEND_URL
+
+            # 4. Creamos la URL completa que irá en el QR
+            pase_url = f"{frontend_url}/pase-visitante?data={base64_string}"
+
+            # 5. Enviamos la URL al frontend
+            return Response({'qr_data': pase_url}, status=status.HTTP_200_OK)
 
         except ListaVisitantes.DoesNotExist:
             return Response({'error': 'Visitante no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
 class DetalleMultaViewSet(BaseModelViewSet):
     permission_classes = [IsAdmin]
     queryset = DetalleMulta.objects.all().order_by('id')
