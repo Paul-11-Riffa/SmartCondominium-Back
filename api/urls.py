@@ -15,7 +15,7 @@ from .views import (
 )
 
 router = DefaultRouter()
-# --- Aquí van todos tus router.register(...) sin cambios ---
+# --- Registros del Router (esto no cambia) ---
 router.register(r'roles', RolViewSet)
 router.register(r'usuarios', UsuarioViewSet)
 router.register(r'propiedades', PropiedadViewSet)
@@ -38,29 +38,29 @@ router.register(r'envios', EnvioViewSet)
 router.register(r'registros', RegistroViewSet)
 router.register(r'solicitudes-mantenimiento', SolicitudMantenimientoViewSet, basename='solicitud-mantenimiento')
 router.register(r'bitacora', BitacoraViewSet)
-if AIDetectionViewSet:
-    router.register(r'ai-detection', AIDetectionViewSet, basename='ai-detection')
-# --- FIN DE LA MODIFICACIÓN ---
+router.register(r'ai-detection', AIDetectionViewSet, basename='ai-detection')
 router.register(r'reconocimientos-faciales', ReconocimientoFacialViewSet)
 router.register(r'detecciones-placas', DeteccionPlacaViewSet)
 router.register(r'perfiles-faciales', PerfilFacialViewSet)
 router.register(r'reportes-seguridad', ReporteSeguridadViewSet)
 router.register(r'mantenimientos-preventivos', MantenimientoPreventivoViewSet, basename='mantenimiento-preventivo')
 
+# --- ESTA ES LA ESTRUCTURA CORRECTA ---
 urlpatterns = [
-    path('', include(router.urls)),
-    path("test/", test_view, name="test-view"),
+    # --- 1. TODAS las rutas específicas y personalizadas van PRIMERO ---
     path('auth/login/', LoginView.as_view(), name='auth-login'),
     path('auth/register/', RegisterView.as_view(), name='auth-register'),
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path("estado-cuenta/", EstadoCuentaView.as_view(), name="estado-cuenta"),
     path('comprobante/<int:pk>/', ComprobantePDFView.as_view(), name='comprobante-pdf'),
-
-    # Tu nueva ruta para el reporte de áreas comunes
     path("reporte/areas-comunes/", ReporteUsoAreasComunesView.as_view(), name="reporte-uso-areas"),
     path("reporte/bitacora/", ReporteBitacoraView.as_view(), name="reporte-bitacora"),
     path("pagar-cuota/", PagarCuotaView.as_view(), name="pagar-cuota"),
     path("stripe-webhook/", StripeWebhookView.as_view(), name="stripe-webhook"),
     path("historial-pagos/", HistorialPagosView.as_view(), name="historial-pagos"),
     path("mis-notificaciones/", MisNotificacionesView.as_view(), name="mis-notificaciones"),
+    path("test/", test_view, name="test-view"),
+
+    # --- 2. El enrutador genérico (la "red") va DESPUÉS de todas las rutas específicas ---
+    path('', include(router.urls)),
 ]
