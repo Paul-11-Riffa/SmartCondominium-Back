@@ -12,6 +12,7 @@ from .views import (
     PerfilFacialViewSet, ReporteSeguridadViewSet, EstadoCuentaView, ComprobantePDFView,
     ReporteUsoAreasComunesView, test_view, MantenimientoPreventivoViewSet, ReporteBitacoraView, PagarCuotaView,
     StripeWebhookView, HistorialPagosView, MisNotificacionesView, ActualizarFotoPerfilView, MiPropiedadView,
+    EnviarNotificacionView
 )
 
 router = DefaultRouter()
@@ -62,7 +63,7 @@ urlpatterns = [
     path("test/", test_view, name="test-view"),
     path("mi-propiedad/", MiPropiedadView.as_view(), name="mi-propiedad"),
     path('usuario/actualizar-foto/', ActualizarFotoPerfilView.as_view(), name='actualizar-foto-perfil'),
-
+    path('enviar-notificacion/', EnviarNotificacionView.as_view(), name='enviar-notificacion'),
     # --- 2. El enrutador genérico (la "red") va AL FINAL de todas las demás ---
     path('', include(router.urls)),
 ]

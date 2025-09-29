@@ -2253,3 +2253,52 @@ class ActualizarFotoPerfilView(APIView):
             # logger.error(f"Error al actualizar foto de perfil: {e}")
             return Response({'error': 'Ocurrió un error interno en el servidor.'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class EnviarNotificacionView(APIView):
+    """
+    Crea una notificación y la envía a todos los residentes activos.
+    """
+    permission_classes = [IsAdmin]
+
+    def post(self, request):
+        tipo = request.data.get('tipo')
+        descripcion = request.data.get('descripcion')
+
+        if not tipo or not descripcion:
+            return Response({'detail': 'El tipo y la descripción son obligatorios.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                # 1. Crear el objeto de Notificación
+                notificacion = Notificaciones.objects.create(
+                    tipo=tipo,
+                    descripcion=descripcion
+                )
+
+                # 2. Obtener todos los residentes activos
+                residentes_activos = Usuario.objects.filter(estado='activo', idrol__tipo='residente')
+
+                # 3. Crear un objeto Envio para cada residente
+                envios = []
+                for residente in residentes_activos:
+                    envios.append(
+                        Envio(
+                            codigo_usuario=residente,
+                            id_notific=notificacion,
+                            fecha=timezone.now().date(),
+                            hora=timezone.now().time(),
+                            estado='no leido'
+                        )
+                    )
+
+                Envio.objects.bulk_create(envios)
+
+                # Registrar en la bitácora
+                _bitacora(request, f"Envío de notificación masiva: '{descripcion[:50]}...'")
+
+                return Response({'detail': 'Notificación enviada exitosamente.', 'usuarios_notificados': len(residentes_activos)}, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            # logger.error(f"Error al enviar notificación masiva: {e}")
+            return Response({'detail': 'Ocurrió un error interno al enviar la notificación.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
