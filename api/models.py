@@ -32,6 +32,7 @@ class Usuario(models.Model):
         db_column="IdRol",
         related_name="usuarios",
     )
+    foto_perfil_url = models.URLField(null=True, blank=True, db_column="FotoPerfilUrl")
 
     class Meta:
         managed = False
@@ -58,7 +59,6 @@ class Propiedad(models.Model):
         return f"Propiedad {self.codigo}"
 
 
-
 class Multa(models.Model):
     id = models.SmallAutoField(primary_key=True, db_column="Id")
     descripcion = models.TextField(db_column="Descripcion", null=True, blank=True)
@@ -68,7 +68,6 @@ class Multa(models.Model):
     class Meta:
         managed = True
         db_table = "Multa"
-
 
 
 # En api/models.py
@@ -126,6 +125,7 @@ class Tareas(models.Model):
     def __str__(self):
         return f"Tarea {self.id}"
 
+
 class Vehiculo(models.Model):
     id = models.BigAutoField(primary_key=True, db_column="Id")
     # --- CAMPO AÑADIDO ---
@@ -138,7 +138,7 @@ class Vehiculo(models.Model):
     estado = models.TextField(null=True, blank=True, db_column="Estado")
 
     class Meta:
-        managed = False # --- CAMBIO IMPORTANTE: DE False A True ---
+        managed = False  # --- CAMBIO IMPORTANTE: DE False A True ---
         db_table = "Vehiculo"
 
     def __str__(self):
@@ -181,6 +181,7 @@ class Pertenece(models.Model):
 
     def __str__(self):
         return f"Pertenece {self.id}"
+
 
 class ListaVisitantes(models.Model):
     id = models.BigAutoField(primary_key=True, db_column="Id")
@@ -412,6 +413,8 @@ class Bitacora(models.Model):
 
     def __str__(self):
         return f"Bitácora {self.id}"
+
+
 # Agregar estos modelos al final de api/models.py
 
 class PerfilFacial(models.Model):
@@ -520,6 +523,7 @@ class ReporteSeguridad(models.Model):
     def __str__(self):
         return f"Reporte {self.tipo_evento} - {self.fecha_evento}"
 
+
 class SolicitudMantenimiento(models.Model):
     id = models.BigAutoField(primary_key=True, db_column="Id")
     codigo_usuario = models.ForeignKey(
@@ -540,7 +544,8 @@ class SolicitudMantenimiento(models.Model):
     descripcion = models.TextField(db_column="Descripcion")
     fecha_solicitud = models.DateTimeField(auto_now_add=True, db_column="FechaSolicitud")
     estado = models.TextField(
-        choices=[('Pendiente', 'Pendiente'), ('En Progreso', 'En Progreso'), ('Completada', 'Completada'), ('Cancelada', 'Cancelada')],
+        choices=[('Pendiente', 'Pendiente'), ('En Progreso', 'En Progreso'), ('Completada', 'Completada'),
+                 ('Cancelada', 'Cancelada')],
         default='Pendiente',
         db_column="Estado"
     )

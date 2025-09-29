@@ -411,6 +411,9 @@ class UsuarioViewSet(BaseModelViewSet):
 # smartcondominium-back/api/views.py
 
 # ... (otros imports)
+# smartcondominium-back/api/views.py
+
+# ... (otros imports)
 
 # REEMPLAZA TU CLASE PerteneceViewSet ACTUAL CON ESTA VERSIÓN MEJORADA
 class PerteneceViewSet(BaseModelViewSet):
@@ -554,6 +557,7 @@ class PerteneceViewSet(BaseModelViewSet):
             ip = request.META.get('REMOTE_ADDR')
         return ip
 
+
 class ListaVisitantesViewSet(BaseModelViewSet):
     queryset = ListaVisitantes.objects.all().order_by('id')
     serializer_class = ListaVisitantesSerializer
@@ -601,6 +605,8 @@ class ListaVisitantesViewSet(BaseModelViewSet):
             return Response({'error': 'Visitante no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class DetalleMultaViewSet(BaseModelViewSet):
     permission_classes = [IsAdmin]
     queryset = DetalleMulta.objects.all().order_by('id')
@@ -1219,7 +1225,7 @@ if FacialRecognitionService and PlateDetectionService:
                     'count': 0
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Y la función delete_profile:
+            # Y la función delete_profile:
 
             # En api/views.py, dentro de la clase AIDetectionViewSet
 
@@ -1583,8 +1589,11 @@ class SolicitudMantenimientoViewSet(BaseModelViewSet):
         try:
             usuario = Usuario.objects.get(correo=self.request.user.email)
             if usuario.idrol and usuario.idrol.tipo == 'admin':
-                return SolicitudMantenimiento.objects.all().select_related('codigo_usuario', 'codigo_propiedad', 'id_pago')
-            return SolicitudMantenimiento.objects.filter(codigo_usuario=usuario).select_related('codigo_usuario', 'codigo_propiedad', 'id_pago')
+                return SolicitudMantenimiento.objects.all().select_related('codigo_usuario', 'codigo_propiedad',
+                                                                           'id_pago')
+            return SolicitudMantenimiento.objects.filter(codigo_usuario=usuario).select_related('codigo_usuario',
+                                                                                                'codigo_propiedad',
+                                                                                                'id_pago')
         except Usuario.DoesNotExist:
             return SolicitudMantenimiento.objects.none()
 
@@ -1726,7 +1735,8 @@ class ReporteUsoAreasComunesView(APIView):
         buffer = BytesIO()
         wb.save(buffer)
         buffer.seek(0)
-        response = HttpResponse(buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response = HttpResponse(buffer,
+                                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = 'attachment; filename="reporte_areas_comunes.xlsx"'
         return response
 
@@ -1752,6 +1762,7 @@ class ReporteUsoAreasComunesView(APIView):
 
         except Exception as e:
             return Response({'error': f'Ocurrió un error inesperado: {str(e)}'}, status=500)
+
 
 # Pega esto al final de api/views.py
 
@@ -1904,6 +1915,7 @@ class StripeWebhookView(APIView):
 
         return Response(status=200)
 
+
 # smartcondominium-back/api/views.py
 
 # smartcondominium-back/api/views.py
@@ -2017,7 +2029,8 @@ class ReporteBitacoraView(APIView):
         wb.save(buffer)
         buffer.seek(0)
 
-        response = HttpResponse(buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response = HttpResponse(buffer,
+                                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = 'attachment; filename="reporte_bitacora.xlsx"'
         return response
 
@@ -2042,6 +2055,7 @@ class ReporteBitacoraView(APIView):
         except Exception as e:
             print(traceback.format_exc())
             return Response({'error': f'Ocurrió un error al generar el reporte: {str(e)}'}, status=500)
+
 
 class HistorialPagosView(APIView):
     """
@@ -2158,3 +2172,84 @@ class MisNotificacionesView(APIView):
             return Response(notificaciones)
         except Usuario.DoesNotExist:
             return Response({"error": "Usuario no encontrado."}, status=404)
+
+
+# smartcondominium-back/SmartCondominium-Back-b5d0400d0a9e0923a68b33da3bc3258777d6b57a/api/views.py
+
+# ... (al final del archivo, antes de los Stripe Webhooks o al final de las vistas de API)
+
+class MiPropiedadView(APIView):
+    """
+    Devuelve los detalles de la propiedad activa del usuario autenticado.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            usuario = Usuario.objects.get(correo=request.user.email)
+
+            # Buscamos la asignación activa (sin fecha de fin o con fecha de fin en el futuro)
+            asignacion_activa = Pertenece.objects.filter(
+                codigo_usuario=usuario,
+                fecha_fin__isnull=True
+            ).select_related('codigo_propiedad').first()
+
+            if not asignacion_activa:
+                asignacion_activa = Pertenece.objects.filter(
+                    codigo_usuario=usuario,
+                    fecha_fin__gte=timezone.now().date()
+                ).select_related('codigo_propiedad').first()
+
+            if asignacion_activa and asignacion_activa.codigo_propiedad:
+                propiedad = asignacion_activa.codigo_propiedad
+                serializer = PropiedadSerializer(propiedad)
+                return Response(serializer.data)
+            else:
+                return Response({"detail": "No tienes una propiedad asignada actualmente."},
+                                status=status.HTTP_404_NOT_FOUND)
+
+        except Usuario.DoesNotExist:
+            return Response({"detail": "Usuario no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ActualizarFotoPerfilView(APIView):
+    """
+    Permite al usuario autenticado subir o actualizar su foto de perfil.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            usuario = Usuario.objects.get(correo=request.user.email)
+            image_file = request.FILES.get('avatar')
+
+            if not image_file:
+                return Response({'error': 'No se proporcionó ninguna imagen.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            storage_service = SupabaseStorageService()
+            upload_result = storage_service.upload_django_file(
+                image_file,
+                folder="avatars",
+                prefix=f"user_{usuario.codigo}"
+            )
+
+            if not upload_result:
+                return Response({'error': 'No se pudo subir la imagen.'},
+                                status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Actualizamos el usuario con la nueva URL
+            usuario.foto_perfil_url = upload_result['public_url']
+            usuario.save()
+
+            # Devolvemos el objeto de usuario completo y actualizado
+            serializer = UsuarioSerializer(usuario)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Usuario.DoesNotExist:
+            return Response({'error': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            # Es una buena práctica registrar el error real en el log del servidor
+            # logger.error(f"Error al actualizar foto de perfil: {e}")
+            return Response({'error': 'Ocurrió un error interno en el servidor.'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)

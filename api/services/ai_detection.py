@@ -34,16 +34,13 @@ class FacialRecognitionService:
         self.known_encodings = []
         self.known_users = []
         self.storage_service = SupabaseStorageService()
-        self.load_known_faces()
 
     def load_known_faces(self):
         """Carga las caras conocidas desde la base de datos"""
         try:
             perfiles = PerfilFacial.objects.filter(activo=True).select_related('codigo_usuario')
-
             self.known_encodings = []
             self.known_users = []
-
             for perfil in perfiles:
                 try:
                     encoding = np.array(json.loads(perfil.encoding_facial))
@@ -51,9 +48,7 @@ class FacialRecognitionService:
                     self.known_users.append(perfil.codigo_usuario)
                 except Exception as e:
                     logger.error(f"Error cargando perfil facial {perfil.id}: {e}")
-
-            logger.info(f"Cargados {len(self.known_encodings)} perfiles faciales")
-
+            logger.info(f"Cargados {len(self.known_encodings)} perfiles faciales para reconocimiento.")
         except Exception as e:
             logger.error(f"Error cargando caras conocidas: {e}")
 
@@ -121,11 +116,17 @@ class FacialRecognitionService:
 
     def recognize_face(self, image_base64: str, camera_location: str = "Principal") -> Dict:
         """Reconoce una cara en la imagen"""
+
+        # --- ¡ESTA ES LA LÍNEA CLAVE AÑADIDA! ---
+        self.load_known_faces()  # Recargamos los perfiles justo antes de cada reconocimiento.
+        # -----------------------------------------
+
         try:
             image = self._base64_to_image(image_base64)
             if image is None:
                 return self._create_recognition_result(False, None, 0.0, image_base64, camera_location)
 
+            # ... (el resto de la función recognize_face no cambia)
             face_locations = face_recognition.face_locations(image)
             if not face_locations:
                 return self._create_recognition_result(False, None, 0.0, image_base64, camera_location)
@@ -292,6 +293,12 @@ class FacialRecognitionService:
 
     def recognize_face_from_file(self, image_file: InMemoryUploadedFile, camera_location: str = "Principal") -> Dict:
         """Reconoce una cara desde un archivo Django"""
+
+        # --- ¡ESTA ES LA CORRECCIÓN DEFINITIVA! ---
+        # AHORA LA CARGA DE PERFILES ESTÁ EN LA FUNCIÓN CORRECTA
+        self.load_known_faces()
+        # ------------------------------------------
+
         try:
             image = self._file_to_image(image_file)
             if image is None:
@@ -305,27 +312,33 @@ class FacialRecognitionService:
             if not face_encodings:
                 return self._create_recognition_result_from_file(False, None, 0.0, image_file, camera_location)
 
+            # --- CORRECCIÓN IMPORTANTE EN LA LÓGICA DE COMPARACIÓN ---
+            # Comparamos CADA cara encontrada en la imagen de entrada con TODAS las caras conocidas.
             for face_encoding in face_encodings:
-                if not self.known_encodings:
+                if not self.known_encodings:  # Si no hay caras conocidas, no hay nada que hacer
                     break
 
                 matches = face_recognition.compare_faces(
                     self.known_encodings, face_encoding, tolerance=self.tolerance
                 )
-                face_distances = face_recognition.face_distance(
-                    self.known_encodings, face_encoding
-                )
 
-                if any(matches):
+                # Si hubo al menos una coincidencia
+                if True in matches:
+                    face_distances = face_recognition.face_distance(
+                        self.known_encodings, face_encoding
+                    )
                     best_match_index = np.argmin(face_distances)
+
+                    # Verificamos si la mejor coincidencia es realmente una coincidencia válida
                     if matches[best_match_index]:
                         usuario = self.known_users[best_match_index]
                         confidence = (1 - face_distances[best_match_index]) * 100
-
+                        # Si encontramos una coincidencia, retornamos inmediatamente.
                         return self._create_recognition_result_from_file(
                             True, usuario, confidence, image_file, camera_location
                         )
 
+            # Si después de revisar todas las caras no encontramos ninguna coincidencia, retornamos "no identificado".
             return self._create_recognition_result_from_file(False, None, 0.0, image_file, camera_location)
 
         except Exception as e:
